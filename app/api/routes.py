@@ -40,15 +40,16 @@ async def query_documents(request: QueryRequest):
     return retrieval.query(
         question=request.question,
         document_id=request.document_id,
+        history=request.history,
     )
 
 
 @router.get("/documents", response_model=list[DocumentInfo])
 async def list_documents():
     from langchain_chroma import Chroma
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from app.services.embeddings import FastEmbeddings
 
-    embeddings = HuggingFaceEmbeddings(model_name=settings.embedding_model)
+    embeddings = FastEmbeddings(model_name=settings.embedding_model)
     vector_store = Chroma(
         persist_directory=settings.chroma_path,
         embedding_function=embeddings,

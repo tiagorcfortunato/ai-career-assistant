@@ -7,9 +7,15 @@ class UploadResponse(BaseModel):
     chunks_count: int
 
 
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class QueryRequest(BaseModel):
     question: str
     document_id: str | None = None
+    history: list[ChatMessage] = []
 
 
 class Source(BaseModel):

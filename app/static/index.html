@@ -314,6 +314,7 @@
 
 <script>
   let documentId = null;
+  let conversationHistory = [];
 
   // ── Upload ──────────────────────────────────────────────────────────────────
 
@@ -358,12 +359,12 @@
 
   function removeDocument() {
     documentId = null;
+    conversationHistory = [];
     document.getElementById('docBadge').classList.remove('visible');
     document.getElementById('uploadLabel').style.display = 'flex';
     document.getElementById('questionInput').disabled = true;
     document.getElementById('sendBtn').disabled = true;
     document.getElementById('messages').innerHTML = '';
-    document.getElementById('emptyState') || showEmptyState();
     showEmptyState();
   }
 
@@ -386,13 +387,21 @@
       const res  = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, document_id: documentId }),
+        body: JSON.stringify({
+          question,
+          document_id: documentId,
+          history: conversationHistory,
+        }),
       });
       const data = await res.json();
 
       typingEl.remove();
 
       if (!res.ok) throw new Error(data.detail || 'Query failed');
+
+      // Update history for next turn
+      conversationHistory.push({ role: 'user', content: question });
+      conversationHistory.push({ role: 'assistant', content: data.answer });
 
       addMessage('bot', data.answer, data.sources);
 
