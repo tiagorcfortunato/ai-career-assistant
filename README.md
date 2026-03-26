@@ -4,7 +4,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** application that let
 
 Upload multiple documents, ask questions, and get accurate answers grounded in your files — with source attribution showing exactly which section each answer came from.
 
-> **Live demo:** [coming soon — deploy in progress]
+> **Live demo:** [https://rag-pdf-chatbot-0w9z.onrender.com](https://rag-pdf-chatbot-0w9z.onrender.com)
 
 ---
 
