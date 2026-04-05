@@ -17,6 +17,74 @@ def _get_vector_store() -> Chroma:
     )
 
 
+def ingest_markdown(file_path: Path, filename: str) -> tuple[str, int]:
+    """
+    Reads a Markdown file, splits into heading-aware chunks, embeds and stores in ChromaDB.
+    Returns (document_id, chunks_count).
+    """
+    document_id = str(uuid.uuid4())
+    text = file_path.read_text(encoding="utf-8")
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+    )
+
+    sections = _extract_markdown_sections(text)
+    chunks = []
+    metadatas = []
+
+    for section_title, section_text in sections:
+        if len(section_text) <= settings.chunk_size:
+            chunks.append(section_text)
+            metadatas.append({
+                "document_id": document_id,
+                "filename": filename,
+                "page": 1,
+                "section": section_title,
+            })
+        else:
+            sub_chunks = splitter.split_text(section_text)
+            for sub_chunk in sub_chunks:
+                chunks.append(f"{section_title}\n{sub_chunk}")
+                metadatas.append({
+                    "document_id": document_id,
+                    "filename": filename,
+                    "page": 1,
+                    "section": section_title,
+                })
+
+    vector_store = _get_vector_store()
+    vector_store.add_texts(texts=chunks, metadatas=metadatas)
+
+    return document_id, len(chunks)
+
+
+def _extract_markdown_sections(text: str) -> list[tuple[str, str]]:
+    """
+    Splits markdown text into sections by ATX headings (# ## ###).
+    Returns list of (section_title, section_text).
+    """
+    sections = []
+    current_title = "Introduction"
+    current_lines: list[str] = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if current_lines:
+                sections.append((current_title, current_title + "\n" + "\n".join(current_lines)))
+            current_title = stripped.lstrip("#").strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_lines:
+        sections.append((current_title, current_title + "\n" + "\n".join(current_lines)))
+
+    return sections if sections else [("Document", text)]
+
+
 def ingest_pdf(file_path: Path, filename: str) -> tuple[str, int]:
     """
     Reads a PDF, splits into section-aware chunks, embeds and stores in ChromaDB.
