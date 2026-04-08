@@ -41,6 +41,10 @@ FIDgate is building autonomous optimization systems to replace manual, Excel-bas
 
 ## Academic Excellence
 
+### MSc Thesis Overview
+
+Tiago's MSc thesis is titled *"Expert System for Road Surface Hazard Detection: A Deep Learning-Based Detection and Maintenance Prioritization Pipeline"*, submitted in February 2026 at the University of Europe for Applied Sciences, Berlin. It presents a modular two-component pipeline: a YOLOv8 object detection model identifies road surface defects (potholes, cracks) from monocular images, and a deterministic rule-based expert system assigns maintenance priority levels (Low / Medium / High) based on defect type, confidence scores, and detection count. Best result: mAP50 of 0.663 with YOLOv8s, with post-processing reducing noisy detections by 31.2%. The architecture separates perception from reasoning, allowing decision logic to be updated without retraining the model. This is directly analogous to FIDgate's autonomous optimization system — replacing manual judgment with automated, traceable reasoning on top of a detection/modelling layer.
+
 ### MSc Thesis — Expert System for Road Surface Hazard Detection
 
 **Full Title:** *Expert System for Road Surface Hazard Detection: A Deep Learning-Based Detection and Maintenance Prioritization Pipeline*
