@@ -13,10 +13,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY tests/ ./tests/
 
-# Bake the knowledge base into the image so it auto-ingests on cold start
 COPY data/knowledge_base.md ./data/knowledge_base.md
 
-# Create directories for volumes
+# Pre-ingest knowledge base at build time so there's no memory spike at runtime
+# GROQ_API_KEY is not used during ingestion (embeddings are local via fastembed)
+RUN GROQ_API_KEY=build-placeholder python -c "\
+from app.services.ingestion import ingest_markdown; \
+from pathlib import Path; \
+doc_id, chunks = ingest_markdown(Path('data/knowledge_base.md'), 'knowledge_base.md'); \
+print(f'Pre-indexed: {chunks} chunks, doc_id={doc_id}')"
+
 RUN mkdir -p chroma_db
 
 EXPOSE 8000

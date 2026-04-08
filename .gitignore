@@ -15,8 +15,8 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Uploads
-data/
+# Uploads (ignore PDFs but keep knowledge base)
+data/*.pdf
 
 # IDE
 .vscode/
