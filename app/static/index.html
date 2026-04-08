@@ -148,8 +148,9 @@
     .bubble p:last-child { margin-bottom: 0; }
     .bubble ul, .bubble ol { padding-left: 20px; margin-bottom: 8px; }
     .bubble li { margin-bottom: 4px; }
-    .bubble li.clickable-q { cursor: pointer; color: var(--primary); transition: opacity 0.15s; }
-    .bubble li.clickable-q:hover { opacity: 0.7; }
+    .bubble li.clickable-q { cursor: pointer; }
+    .bubble li.clickable-q > strong { color: var(--primary); text-decoration: underline; text-decoration-color: transparent; transition: text-decoration-color 0.15s; }
+    .bubble li.clickable-q:hover > strong { text-decoration-color: var(--primary); }
     .bubble strong { font-weight: 700; }
     .bubble em { font-style: italic; }
     .bubble code {
