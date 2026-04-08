@@ -110,72 +110,81 @@ Python, PyTorch, YOLOv8 (Ultralytics), Scikit-learn, Pandas, Linux, GPU-accelera
 
 ## Full-Stack & AI Projects
 
-### 1. RAG PDF Chatbot (2026)
+### 1. RAG Career Chatbot (2026)
 
 **Repository:** github.com/tiagorcfortunato/rag-pdf-chatbot
 **Live Demo:** rag-pdf-chatbot-0w9z.onrender.com
 
-A production-ready Retrieval-Augmented Generation (RAG) application that allows users to upload PDFs and conduct a contextual conversation with the content — with full conversation history and source attribution (section + page number).
+A production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application. It serves as Tiago's interactive professional profile — recruiters and hiring managers can ask natural-language questions about his experience, projects, skills, and motivations, and receive accurate, sourced answers in real time with streaming responses.
+
+Originally built as a general-purpose PDF chatbot, Tiago evolved it into a career-focused product with a recruiter persona, streaming UI, and optimized deployment for memory-constrained environments.
 
 #### Architecture
 
 ```
-PDF Upload
+Knowledge base (Markdown) → section-aware chunking → fastembed (BAAI/bge-small-en-v1.5, local)
     ↓
-PyMuPDF (fitz) font-size analysis → heading detection → section-aware chunks
-    ↓
-fastembed (BAAI/bge-small-en-v1.5) — local embeddings, ~80MB model
-    ↓
-ChromaDB (persistent vector store)
+ChromaDB (persistent vector store, pre-ingested at Docker build time)
 
 ──────────────────────────────────────
 
-User question
+User question (via chat UI or API)
     ↓
 History-enriched search query (last 2 exchanges prepended)
     ↓
-Similarity search → top-6 most relevant chunks
+Similarity search → top-10 most relevant chunks
     ↓
 LangChain prompt: system instructions + conversation history + context + question
     ↓
-Groq LLM (Llama 3.1 8B Instant)
+Groq LLM (Llama 3.1 8B Instant) → streaming SSE tokens
     ↓
-Answer + source attribution (section + page)
+Frontend: real-time markdown rendering + source attribution
 ```
 
 #### Key Technical Details
 
-- **Section-aware chunking:** Uses PyMuPDF to extract font sizes across all spans. Computes median font size, then flags any text 15%+ larger as a heading. Splits document along headings — keeps small sections whole, uses `RecursiveCharacterTextSplitter` only for large sections. Each sub-chunk is prefixed with its section title for retrieval coherence.
+- **Streaming SSE responses:** Backend yields Server-Sent Events via `POST /api/query/stream`. Frontend consumes the stream with Fetch API ReadableStream, rendering markdown incrementally as tokens arrive. Feels like ChatGPT — text appears word by word.
+- **Pre-build Docker ingestion:** The knowledge base is embedded and indexed at Docker build time (`RUN python -c "ingest_markdown(...)"`), not at runtime. This avoids the memory spike from loading fastembed + ChromaDB + ingesting 100+ chunks simultaneously — critical for fitting within Render's 512MB free tier.
+- **Section-aware chunking:** For PDFs, uses PyMuPDF to extract font sizes across all spans, computes median font size, flags text 15%+ larger as headings. For Markdown, splits by ATX headings. Keeps small sections whole; uses `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) only for large sections. Each sub-chunk is prefixed with its section title for retrieval coherence.
 - **History-enriched retrieval:** Enriches search queries with the last 2 conversation exchanges, enabling natural follow-up questions ("tell me more about the first one").
-- **Source attribution:** Every answer returns the exact section name and page number of the retrieved chunks.
-- **Multi-document support:** Users can query individual documents by `document_id` or query all uploaded documents simultaneously.
-- **Recruiter persona system prompt:** Configured as a Professional Talent Assistant for Tiago, instructing the LLM to answer strictly from context, never hallucinate, and highlight technical skills when information is missing.
-- **REST API:** Full OpenAPI/Swagger docs at `/docs`.
+- **Suggested question chips:** Interactive clickable questions shown after each response. Tracks which questions have been asked and shows only remaining suggestions — guides the conversation naturally without requiring the user to think of questions.
+- **Markdown rendering:** Uses marked.js to render tables, bullet points, code blocks, bold text, and headers within chat bubbles.
+- **Keep-alive mechanism:** Background async task pings `/health` every 10 minutes to prevent Render free tier spin-down (which otherwise adds 50+ seconds cold start delay).
+- **Source attribution:** Every answer shows the knowledge base sections that were retrieved, so users can see which parts of Tiago's profile informed the response.
+- **Recruiter persona system prompt:** Configured as a Professional Talent Assistant with instructions to answer from context, never hallucinate, and always try to give thorough answers from available information.
+- **REST API:** Full OpenAPI/Swagger docs at `/docs`. Both non-streaming (`POST /api/query`) and streaming (`POST /api/query/stream`) endpoints available.
 
 #### Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Backend | FastAPI |
-| PDF Parsing | PyMuPDF (fitz) |
-| Embeddings | BAAI/bge-small-en-v1.5 via fastembed (local) |
-| Vector DB | ChromaDB (persistent) |
-| LLM | Llama 3.1 8B via Groq API |
-| Orchestration | LangChain |
-| Frontend | Vanilla HTML/CSS/JS (served by FastAPI) |
-| Deployment | Docker, Docker Compose, Render |
+| Backend | FastAPI 0.115 |
+| PDF Parsing | PyMuPDF (fitz) 1.24 |
+| Embeddings | BAAI/bge-small-en-v1.5 via fastembed 0.3.1 (local, ~80MB) |
+| Vector DB | ChromaDB 0.5 (persistent) |
+| LLM | Llama 3.1 8B Instant via Groq API |
+| Orchestration | LangChain 0.3 + langchain-groq 0.2 |
+| Frontend | Vanilla HTML/CSS/JS + marked.js (served by FastAPI) |
+| Deployment | Docker, Render (free tier, 512MB) |
 | Testing | Pytest + GitHub Actions CI/CD |
+| Streaming | Server-Sent Events (SSE) via FastAPI StreamingResponse |
 
 #### Challenges and Solutions
 
 - **Challenge:** Generic chunking loses section context, causing poor retrieval.
-  **Solution:** Built custom font-size-based heading detection with PyMuPDF — no external dependencies, works on any PDF.
+  **Solution:** Built custom font-size-based heading detection with PyMuPDF for PDFs and ATX heading splitting for Markdown — no external dependencies, works on any document.
 
 - **Challenge:** Follow-up questions fail vector search when they lack explicit keywords.
   **Solution:** History-enriched query construction prepends recent conversation context before embedding the search query.
 
 - **Challenge:** Free embedding APIs add latency and cost at scale.
-  **Solution:** Runs `BAAI/bge-small-en-v1.5` locally via fastembed — downloaded once (~80MB), zero API cost.
+  **Solution:** Runs BAAI/bge-small-en-v1.5 locally via fastembed — downloaded once (~80MB), zero API cost.
+
+- **Challenge:** Render free tier has only 512MB RAM; loading fastembed + ChromaDB + ingesting 100+ chunks at startup causes OOM crash.
+  **Solution:** Pre-ingest the knowledge base during Docker build. The vector store is baked into the image — runtime startup only loads FastAPI + reads the pre-built ChromaDB, fitting comfortably in 512MB.
+
+- **Challenge:** Render free tier spins down after inactivity, causing 50+ second cold starts.
+  **Solution:** Background async keep-alive task pings the health endpoint every 10 minutes.
 
 ---
 
@@ -186,16 +195,21 @@ Answer + source attribution (section + page)
 **Live Dashboard:** inspection-dashboard.vercel.app
 **API Docs:** inspection-management-api.onrender.com/docs
 
-A production-oriented REST API for infrastructure inspection management, demonstrating clean backend architecture with full test coverage and CI/CD.
+A production-grade REST API for infrastructure inspection management with **AI-powered damage classification**, role-based access control, and a companion React dashboard. Demonstrates clean layered backend architecture, comprehensive test coverage, and real AI integration.
 
-#### Features
+#### Key Features
 
-- **JWT Authentication:** User registration, login, protected routes via dependency injection
-- **Per-user data isolation:** Each user only accesses their own inspection records
+- **AI-Powered Classification:** When an inspection is created, a background task sends the notes and/or uploaded image to **Groq Llama 3.2 11B Vision** (multimodal LLM) which classifies the damage type (pothole, crack, rutting, surface_wear) and severity (low, medium, high, critical) with a human-readable rationale. Uses LangChain structured output for type-safe classification results.
+- **Multimodal Image Analysis:** Users can upload base64-encoded images of road damage. The AI service processes both text notes and images together for classification — this is real multimodal AI in production, not just text.
+- **Role-Based Access Control:** Two roles (user, admin). Regular users can only CRUD their own inspections. Admins have a separate `/admin` endpoint group that can view all inspections across all users (with user_email), update, and delete any inspection.
+- **JWT Authentication:** Registration, login, protected routes via FastAPI dependency injection (python-jose + bcrypt).
+- **Per-user data isolation:** Each user only sees their own records. Enforced at the query level.
 - **Status lifecycle:** `reported` → `verified` → `scheduled` → `repaired`
 - **Filtering:** By `severity`, `status`, `damage_type`
-- **Pagination:** `limit` + `offset` query parameters
-- **Sorting:** By `reported_at`, `severity`, or `status` (asc/desc)
+- **Pagination:** `limit` + `offset` with total count
+- **Sorting:** By `reported_at`, `severity`, `status`, `damage_type`, `location_code` (asc/desc)
+- **Rate Limiting:** slowapi to prevent abuse
+- **Background AI Processing:** AI classification runs as a FastAPI BackgroundTask — the API responds immediately to the client while AI processes asynchronously.
 
 #### API Endpoints
 
@@ -203,32 +217,65 @@ A production-oriented REST API for infrastructure inspection management, demonst
 POST /auth/register
 POST /auth/login
 
-GET    /inspections
-POST   /inspections
-GET    /inspections/{inspection_id}
-PUT    /inspections/{inspection_id}
-DELETE /inspections/{inspection_id}
+GET    /inspections                    (user's own, filtered/paginated/sorted)
+POST   /inspections                    (creates + triggers background AI classification)
+GET    /inspections/{id}
+PUT    /inspections/{id}
+DELETE /inspections/{id}
+
+GET    /admin/inspections              (all users, includes user_email)
+PUT    /admin/inspections/{id}
+DELETE /admin/inspections/{id}
 ```
 
 #### Architecture (Layered)
 
 | Layer | Responsibility |
 |---|---|
-| Routers | Handle HTTP requests and responses |
-| Services | Business logic |
-| Models | Database entities (SQLAlchemy) |
-| Schemas | Request/response validation (Pydantic) |
-| Core | Auth, dependencies, enums |
+| Routers | HTTP handlers (auth, inspections, users, admin) |
+| Services | Business logic (inspection_service, ai_service, auth_service) |
+| Models | SQLAlchemy ORM entities (User, Inspection) |
+| Schemas | Pydantic request/response validation |
+| Core | Config, security, dependencies, enums, rate limiter |
+| Database | PostgreSQL with Alembic migrations |
+
+#### Database Migrations (Alembic)
+
+4 sequential migrations showing the evolution of the schema:
+1. `initial_schema` — users + inspections tables
+2. `add_role_to_users` — admin/user role field
+3. `add_ai_fields_to_inspections` — ai_rationale, is_ai_processed columns
+4. `add_image_data_to_inspections` — base64 image storage
 
 #### Testing & CI/CD
 
-- **31 Pytest tests** covering: auth flows, CRUD operations, filtering, pagination, sorting, validation edge cases, admin access control
+- **31 Pytest tests** covering:
+  - Auth: register, login, duplicate email, wrong password, unauthenticated access
+  - CRUD: create, list, get by ID, update, delete
+  - Data isolation: user A cannot see/update/delete user B's inspections
+  - Filtering: by severity, damage_type, status
+  - Pagination: limit, offset, total count, page boundary correctness
+  - Sorting: by severity asc/desc
+  - Admin: admin can list all (with user_email), update any, delete any; regular users get 403 on admin endpoints
+  - Validation: invalid severity, invalid damage_type, missing required fields → 422
 - **GitHub Actions CI:** tests run automatically on every push
-- **Docker Compose:** isolated test environment (`docker compose run tests`)
+- **Docker Compose:** isolated PostgreSQL test environment
 
 #### Tech Stack
 
-Python, FastAPI, PostgreSQL, SQLAlchemy, Alembic (migrations), Pydantic, JWT (python-jose), Pytest, Docker, Docker Compose, GitHub Actions, Render
+| Layer | Technology |
+|---|---|
+| Backend | FastAPI 0.135 |
+| Database | PostgreSQL + SQLAlchemy 2.0 |
+| Migrations | Alembic |
+| AI Classification | Groq Llama 3.2 11B Vision (multimodal) via LangChain structured output |
+| Auth | JWT (python-jose) + bcrypt |
+| Validation | Pydantic 2.12 |
+| Rate Limiting | slowapi |
+| Testing | Pytest (31 tests) |
+| CI/CD | GitHub Actions |
+| Deployment | Docker, Render |
+| Dashboard | React (Vercel) |
 
 ---
 
