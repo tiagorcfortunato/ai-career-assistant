@@ -1,3 +1,6 @@
+import json
+from typing import AsyncGenerator
+
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -108,3 +111,58 @@ def query(question: str, document_id: str | None, history: list[ChatMessage]) ->
     ]
 
     return QueryResponse(answer=response.content, sources=sources)
+
+
+async def stream_query(
+    question: str, document_id: str | None, history: list[ChatMessage]
+) -> AsyncGenerator[str, None]:
+    """Streaming version of query() — yields SSE-formatted lines."""
+    vector_store = _get_vector_store()
+
+    search_query = _build_search_query(question, history)
+    search_filter = {"document_id": document_id} if document_id else None
+
+    results = vector_store.similarity_search(
+        query=search_query,
+        k=settings.retrieval_k,
+        filter=search_filter,
+    )
+
+    if not results:
+        yield f"data: {json.dumps({'token': 'I could not find relevant information about that topic.'})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    context = "\n\n---\n\n".join([doc.page_content for doc in results])
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="history"),
+        ("human", "{question}"),
+    ])
+
+    llm = ChatGroq(model=settings.llm_model, api_key=settings.groq_api_key)
+    chain = prompt | llm
+
+    lc_history = []
+    for msg in history:
+        if msg.role == "user":
+            lc_history.append(HumanMessage(content=msg.content))
+        else:
+            lc_history.append(AIMessage(content=msg.content))
+
+    sources = [
+        {"section": doc.metadata.get("section", ""), "page": doc.metadata.get("page", 0)}
+        for doc in results
+    ]
+    yield f"data: {json.dumps({'sources': sources})}\n\n"
+
+    async for chunk in chain.astream({
+        "context": context,
+        "history": lc_history,
+        "question": question,
+    }):
+        if chunk.content:
+            yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+
+    yield "data: [DONE]\n\n"

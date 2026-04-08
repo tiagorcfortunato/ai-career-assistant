@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 
 from app.models.schemas import UploadResponse, QueryRequest, QueryResponse, DocumentInfo
 from app.services import ingestion, retrieval
@@ -45,6 +46,21 @@ async def query_documents(request: QueryRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/query/stream")
+async def stream_query(request: QueryRequest):
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    return StreamingResponse(
+        retrieval.stream_query(
+            question=request.question,
+            document_id=request.document_id,
+            history=request.history,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/documents", response_model=list[DocumentInfo])

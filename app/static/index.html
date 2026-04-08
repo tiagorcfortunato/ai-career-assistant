@@ -4,227 +4,244 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tiago Fortunato — Career Assistant</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f0f4f8;
+      --card: #ffffff;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --primary-light: #eff6ff;
+      --bot-bubble: #f1f5f9;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f0f2f5;
-      height: 100vh;
+      background: var(--bg);
+      min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 16px;
     }
 
     .container {
       width: 100%;
-      max-width: 820px;
+      max-width: 760px;
       height: 92vh;
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+      background: var(--card);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
 
-    /* Header */
+    /* ── Header ─────────────────────────────────────────────────────── */
     .header {
       padding: 18px 24px;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 16px;
+      gap: 14px;
     }
 
-    .header-title h1 { font-size: 18px; font-weight: 700; color: #111; }
-    .header-title p  { font-size: 13px; color: #888; margin-top: 2px; }
-
-    .upload-label {
+    .avatar-header {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary), #7c3aed);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 8px 14px;
-      background: #f5f5f5;
-      border: 1.5px dashed #ccc;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 13px;
-      color: #555;
-      transition: background 0.2s;
-      white-space: nowrap;
-    }
-
-    .upload-label:hover { background: #ebebeb; }
-    .upload-label input { display: none; }
-
-    .upload-progress { display: none; font-size: 13px; color: #888; }
-
-    /* Document bar */
-    .doc-bar {
-      display: none;
-      padding: 10px 24px;
-      border-bottom: 1px solid #eee;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    .doc-bar.visible { display: flex; }
-
-    .doc-bar-label {
-      font-size: 12px;
-      color: #888;
-      white-space: nowrap;
-      margin-right: 4px;
-    }
-
-    .doc-pill {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
-      border-radius: 20px;
-      font-size: 13px;
-      cursor: pointer;
-      border: 1.5px solid #ddd;
-      background: #fff;
-      color: #555;
-      transition: all 0.15s;
-      max-width: 200px;
-    }
-
-    .doc-pill .pill-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .doc-pill.active {
-      border-color: #1a73e8;
-      background: #e8f0fe;
-      color: #1a73e8;
-      font-weight: 500;
-    }
-
-    .doc-pill.all-pill { font-weight: 500; }
-    .doc-pill.all-pill.active { border-color: #7b1fa2; background: #f3e5f5; color: #7b1fa2; }
-
-    .doc-pill .remove-doc {
-      font-size: 15px;
-      color: #aaa;
-      line-height: 1;
+      justify-content: center;
       flex-shrink: 0;
+      letter-spacing: 0.5px;
     }
 
-    .doc-pill .remove-doc:hover { color: #e53935; }
+    .header-text { flex: 1; min-width: 0; }
+    .header-text h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+    .header-text p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-    /* Messages */
+    .header-links { display: flex; gap: 8px; }
+
+    .header-links a {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+
+    .header-links a:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+
+    /* ── Messages ───────────────────────────────────────────────────── */
     .messages {
       flex: 1;
       overflow-y: auto;
       padding: 24px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 20px;
+      scroll-behavior: smooth;
     }
 
-    .empty-state {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: #bbb;
-      gap: 10px;
-    }
-
-    .empty-state svg { opacity: 0.4; }
-    .empty-state p { font-size: 15px; }
-
-    /* Messages */
-    .message { display: flex; gap: 10px; max-width: 90%; }
+    .message { display: flex; gap: 10px; max-width: 88%; animation: fadeUp 0.25s ease; }
     .message.user { align-self: flex-end; flex-direction: row-reverse; }
     .message.bot  { align-self: flex-start; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
 
     .avatar {
       width: 32px; height: 32px;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 14px;
+      font-size: 12px; font-weight: 700;
       flex-shrink: 0;
       margin-top: 2px;
     }
 
-    .message.user .avatar { background: #1a73e8; color: #fff; }
-    .message.bot  .avatar { background: #f0f0f0; color: #555; }
+    .message.user .avatar { background: var(--primary); color: #fff; }
+    .message.bot  .avatar { background: linear-gradient(135deg, var(--primary), #7c3aed); color: #fff; }
 
     .bubble {
       padding: 12px 16px;
       border-radius: 16px;
       font-size: 14px;
-      line-height: 1.6;
-      color: #111;
+      line-height: 1.65;
+      color: var(--text);
     }
 
     .message.user .bubble {
-      background: #1a73e8;
+      background: var(--primary);
       color: #fff;
       border-bottom-right-radius: 4px;
     }
 
     .message.bot .bubble {
-      background: #f5f5f5;
+      background: var(--bot-bubble);
       border-bottom-left-radius: 4px;
     }
 
-    .sources {
-      margin-top: 10px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+    /* Markdown styles inside bot bubbles */
+    .bubble h1, .bubble h2, .bubble h3 {
+      font-size: 14px; font-weight: 700; margin: 12px 0 6px;
     }
-
-    .source-tag {
-      padding: 3px 10px;
-      background: #e3f2fd;
-      color: #1565c0;
-      border-radius: 12px;
+    .bubble h1:first-child, .bubble h2:first-child, .bubble h3:first-child { margin-top: 0; }
+    .bubble p { margin-bottom: 8px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { padding-left: 20px; margin-bottom: 8px; }
+    .bubble li { margin-bottom: 4px; }
+    .bubble strong { font-weight: 700; }
+    .bubble em { font-style: italic; }
+    .bubble code {
+      background: #e2e8f0;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: "SF Mono", "Fira Code", monospace;
       font-size: 12px;
     }
+    .bubble pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+    .bubble pre code { background: none; padding: 0; color: inherit; font-size: 12px; }
+    .bubble blockquote {
+      border-left: 3px solid var(--primary);
+      padding-left: 12px;
+      color: var(--muted);
+      margin: 8px 0;
+    }
+    .bubble table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+    .bubble th, .bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    .bubble th { background: #f8fafc; font-weight: 600; }
 
-    /* Typing */
-    .typing .bubble { display: flex; align-items: center; gap: 4px; padding: 14px 18px; }
+    /* Sources */
+    .sources { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .source-tag {
+      padding: 3px 10px;
+      background: #e0e7ff;
+      color: #3730a3;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+    }
 
+    /* Typing indicator */
+    .typing .bubble { display: flex; align-items: center; gap: 4px; padding: 14px 16px; }
     .dot {
       width: 7px; height: 7px;
-      background: #aaa;
+      background: #94a3b8;
       border-radius: 50%;
       animation: bounce 1.2s infinite;
     }
-
     .dot:nth-child(2) { animation-delay: 0.2s; }
     .dot:nth-child(3) { animation-delay: 0.4s; }
-
     @keyframes bounce {
       0%, 80%, 100% { transform: translateY(0); }
       40% { transform: translateY(-6px); }
     }
 
-    /* Input */
+    /* ── Suggestion chips ───────────────────────────────────────────── */
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .chip {
+      padding: 7px 14px;
+      background: #fff;
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      font-size: 13px;
+      color: var(--primary);
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+      font-weight: 500;
+    }
+
+    .chip:hover {
+      background: var(--primary-light);
+      border-color: var(--primary);
+    }
+
+    /* ── Input ──────────────────────────────────────────────────────── */
     .input-area {
-      padding: 16px 24px;
-      border-top: 1px solid #eee;
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
       display: flex;
       gap: 10px;
       align-items: flex-end;
+      background: #fff;
     }
 
     textarea {
       flex: 1;
-      padding: 12px 16px;
-      border: 1.5px solid #ddd;
+      padding: 11px 16px;
+      border: 1.5px solid var(--border);
       border-radius: 12px;
       font-size: 14px;
       resize: none;
@@ -233,14 +250,16 @@
       line-height: 1.5;
       max-height: 120px;
       transition: border-color 0.2s;
+      color: var(--text);
     }
 
-    textarea:focus { border-color: #1a73e8; }
-    textarea:disabled { background: #fafafa; color: #aaa; }
+    textarea:focus { border-color: var(--primary); }
+    textarea:disabled { background: #f8fafc; color: #aaa; }
+    textarea::placeholder { color: #94a3b8; }
 
     .send-btn {
-      width: 44px; height: 44px;
-      background: #1a73e8;
+      width: 42px; height: 42px;
+      background: var(--primary);
       border: none;
       border-radius: 12px;
       cursor: pointer;
@@ -248,40 +267,62 @@
       transition: background 0.2s;
       flex-shrink: 0;
     }
-
-    .send-btn:hover { background: #1558b0; }
-    .send-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .send-btn:hover { background: var(--primary-dark); }
+    .send-btn:disabled { background: #cbd5e1; cursor: not-allowed; }
     .send-btn svg { fill: #fff; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────── */
+    .messages::-webkit-scrollbar { width: 4px; }
+    .messages::-webkit-scrollbar-track { background: transparent; }
+    .messages::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+    @media (max-width: 600px) {
+      body { padding: 0; }
+      .container { height: 100vh; border-radius: 0; }
+    }
   </style>
 </head>
 <body>
 <div class="container">
 
-  <!-- Header -->
   <div class="header">
-    <div class="header-title">
+    <div class="avatar-header">TF</div>
+    <div class="header-text">
       <h1>Tiago Fortunato — Career Assistant</h1>
-      <p>Ask me anything about Tiago's experience, projects, and skills</p>
+      <p>AI-powered professional profile &middot; Ask me anything</p>
+    </div>
+    <div class="header-links">
+      <a href="https://github.com/tiagorcfortunato" target="_blank" title="GitHub">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+        </svg>
+      </a>
+      <a href="https://linkedin.com/in/tiagorcfortunato" target="_blank" title="LinkedIn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+        </svg>
+      </a>
+      <a href="https://tiagorcfortunato.vercel.app" target="_blank" title="Portfolio">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+          <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+        </svg>
+      </a>
     </div>
   </div>
 
-  <!-- Messages -->
-  <div class="messages" id="messages">
-  </div>
+  <div class="messages" id="messages"></div>
 
-  <!-- Input -->
   <div class="input-area">
     <textarea
       id="questionInput"
-      placeholder="Ask about Tiago's experience, skills, or projects..."
+      placeholder="Ask about Tiago's experience, projects, or skills..."
       rows="1"
       onkeydown="handleKey(event)"
       oninput="autoResize(this)"
     ></textarea>
     <button class="send-btn" id="sendBtn" onclick="sendQuestion()">
-      <svg width="18" height="18" viewBox="0 0 24 24">
-        <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
-      </svg>
+      <svg width="18" height="18" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
     </button>
   </div>
 
@@ -289,19 +330,34 @@
 
 <script>
   let conversationHistory = [];
+  let chipsShown = false;
+
+  const SUGGESTIONS = [
+    "What projects has Tiago built?",
+    "What is his AI and ML experience?",
+    "Why is he interested in FIDgate?",
+    "Tell me about his MSc thesis",
+    "What is his full tech stack?",
+  ];
+
+  marked.setOptions({ breaks: true, gfm: true });
 
   // ── Init ────────────────────────────────────────────────────────────────────
 
   window.addEventListener('DOMContentLoaded', () => {
-    addMessage('bot', "Hi! I'm Tiago's career assistant. Ask me anything about his experience, projects, or technical skills — I'm here to help you get to know him better.\n\nSome things you can ask:\n- **What projects has Tiago built?**\n- **What is his AI/ML experience?**\n- **Tell me about his MSc thesis.**\n- **What is his tech stack?**");
+    addBotMessage(
+      "Hi! I'm Tiago's career assistant.\n\nAsk me anything about his experience, projects, or technical skills — I'm here to help you get to know him better.",
+      [],
+      true  // show chips
+    );
     document.getElementById('questionInput').focus();
   });
 
-  // ── Query ───────────────────────────────────────────────────────────────────
+  // ── Send ────────────────────────────────────────────────────────────────────
 
-  async function sendQuestion() {
+  async function sendQuestion(text) {
     const input = document.getElementById('questionInput');
-    const question = input.value.trim();
+    const question = (text || input.value).trim();
     if (!question) return;
 
     input.value = '';
@@ -309,100 +365,144 @@
     input.disabled = true;
     document.getElementById('sendBtn').disabled = true;
 
-    addMessage('user', question);
-    const typingEl = addTyping();
+    // Hide chips after first question
+    document.querySelectorAll('.chips').forEach(el => el.remove());
+
+    addUserMessage(question);
+    const { bubble, sourcesEl } = addBotPlaceholder();
+
+    let fullText = '';
+    let sources = [];
+    let buffer = '';
 
     try {
-      const res  = await fetch('/api/query', {
+      const res = await fetch('/api/query/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question,
-          document_id: null,
-          history: conversationHistory,
-        }),
+        body: JSON.stringify({ question, document_id: null, history: conversationHistory }),
       });
-      const data = await res.json();
-      typingEl.remove();
-      if (!res.ok) throw new Error(data.detail || 'Query failed');
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') break;
+
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.sources) {
+              sources = parsed.sources;
+            }
+            if (parsed.token) {
+              fullText += parsed.token;
+              bubble.innerHTML = marked.parse(fullText);
+            }
+          } catch (_) {}
+        }
+      }
+
+      // Render sources
+      const unique = [...new Map(sources.map(s => [s.section, s])).values()];
+      unique.forEach(s => {
+        if (s.section) {
+          const tag = document.createElement('span');
+          tag.className = 'source-tag';
+          tag.textContent = s.section;
+          sourcesEl.appendChild(tag);
+        }
+      });
 
       conversationHistory.push({ role: 'user', content: question });
-      conversationHistory.push({ role: 'assistant', content: data.answer });
-
-      addMessage('bot', data.answer, data.sources);
+      conversationHistory.push({ role: 'assistant', content: fullText });
 
     } catch (err) {
-      typingEl.remove();
-      addMessage('bot', `Error: ${err.message}`);
+      bubble.textContent = `Error: ${err.message}`;
     } finally {
       input.disabled = false;
       document.getElementById('sendBtn').disabled = false;
       input.focus();
+      scrollToBottom();
     }
   }
 
-  // ── UI helpers ──────────────────────────────────────────────────────────────
+  // ── Message builders ────────────────────────────────────────────────────────
 
-  function addMessage(role, text, sources = []) {
-    hideEmptyState();
+  function addUserMessage(text) {
     const msgs = document.getElementById('messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'message user';
+    wrap.innerHTML = `
+      <div class="avatar">U</div>
+      <div class="bubble">${escapeHtml(text)}</div>`;
+    msgs.appendChild(wrap);
+    scrollToBottom();
+  }
 
-    const wrapper = document.createElement('div');
-    wrapper.className = `message ${role}`;
+  function addBotMessage(text, sources = [], withChips = false) {
+    const msgs = document.getElementById('messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'message bot';
 
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.textContent = role === 'user' ? 'U' : '🤖';
+    const sourcesHtml = sources.length
+      ? `<div class="sources">${sources.map(s => `<span class="source-tag">${escapeHtml(s.section)}</span>`).join('')}</div>`
+      : '';
+
+    const chipsHtml = withChips
+      ? `<div class="chips">${SUGGESTIONS.map(q => `<button class="chip" onclick="sendQuestion('${escapeHtml(q)}')">${escapeHtml(q)}</button>`).join('')}</div>`
+      : '';
+
+    wrap.innerHTML = `
+      <div class="avatar">TF</div>
+      <div class="bubble">
+        ${marked.parse(text)}
+        ${sourcesHtml}
+        ${chipsHtml}
+      </div>`;
+    msgs.appendChild(wrap);
+    scrollToBottom();
+  }
+
+  function addBotPlaceholder() {
+    const msgs = document.getElementById('messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'message bot';
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    bubble.innerHTML = formatText(text);
 
-    if (sources.length > 0) {
-      const sourcesDiv = document.createElement('div');
-      sourcesDiv.className = 'sources';
-      const unique = [...new Set(sources.map(s => s.section ? `${s.section} (p.${s.page})` : `p.${s.page}`))];
-      unique.forEach(label => {
-        const tag = document.createElement('span');
-        tag.className = 'source-tag';
-        tag.textContent = label;
-        sourcesDiv.appendChild(tag);
-      });
-      bubble.appendChild(sourcesDiv);
-    }
+    const sourcesEl = document.createElement('div');
+    sourcesEl.className = 'sources';
 
-    wrapper.appendChild(avatar);
-    wrapper.appendChild(bubble);
-    msgs.appendChild(wrapper);
-    msgs.scrollTop = msgs.scrollHeight;
+    wrap.innerHTML = `<div class="avatar">TF</div>`;
+    wrap.appendChild(bubble);
+    wrap.appendChild(sourcesEl);
+    msgs.appendChild(wrap);
+    scrollToBottom();
+
+    return { bubble, sourcesEl };
   }
 
-  function addTyping() {
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function scrollToBottom() {
     const msgs = document.getElementById('messages');
-    const wrapper = document.createElement('div');
-    wrapper.className = 'message bot typing';
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.textContent = '🤖';
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
-    wrapper.appendChild(avatar);
-    wrapper.appendChild(bubble);
-    msgs.appendChild(wrapper);
     msgs.scrollTop = msgs.scrollHeight;
-    return wrapper;
-  }
-
-  function formatText(text) {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br>');
-  }
-
-  function hideEmptyState() {
-    const el = document.getElementById('emptyState');
-    if (el) el.remove();
   }
 
   function handleKey(e) {

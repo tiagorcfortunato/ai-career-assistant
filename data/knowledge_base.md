@@ -21,7 +21,21 @@ His technical focus spans **AI application engineering** (RAG pipelines, compute
 
 **Languages:** Portuguese (native), English (fluent), German (B2.2, actively improving)
 
-**Available for:** Full-Stack or Backend Developer roles in Berlin or remote.
+**Available for:** Full-Stack or Backend Developer roles in Berlin or remote. Actively pursuing the Founding Product & AI Engineer role at FIDgate.
+
+---
+
+## Why FIDgate
+
+FIDgate is building autonomous optimization systems to replace manual, Excel-based energy decisions. This problem resonates directly with Tiago's work: his MSc thesis was architecturally identical — replacing manual road inspection and maintenance decisions with a hybrid ML + rule-based expert system. The pattern is the same: perception/detection layer → reasoning/prioritization layer → automated, traceable decisions. He has built this from scratch.
+
+**What Tiago brings to FIDgate specifically:**
+- Can turn an existing Python API into a clean, developer-facing platform — demonstrated with the Inspection Management API (JWT auth, filtering, pagination, sorting, full OpenAPI docs)
+- Has shipped AI/LLM features in production — RAG chatbot with full pipeline (embeddings, vector search, conversation history, source attribution)
+- Has founding-team experience — built and launched Odys entirely solo, from market research to production
+- Python + TypeScript across the full stack
+- High autonomy — does not need to be managed, figures out what matters and builds it
+- Based in Berlin, aligned with FIDgate's HQ location
 
 ---
 

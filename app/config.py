@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     chroma_path: str = "./chroma_db"
     chunk_size: int = 500
     chunk_overlap: int = 50
-    retrieval_k: int = 4
+    retrieval_k: int = 6
 
     model_config = SettingsConfigDict(env_file=".env")
 
