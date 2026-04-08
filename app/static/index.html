@@ -330,8 +330,6 @@
 
 <script>
   let conversationHistory = [];
-  let chipsShown = false;
-
   const SUGGESTIONS = [
     "What projects has Tiago built?",
     "What is his AI and ML experience?",
@@ -339,6 +337,7 @@
     "Tell me about his MSc thesis",
     "What is his full tech stack?",
   ];
+  const usedSuggestions = new Set();
 
   marked.setOptions({ breaks: true, gfm: true });
 
@@ -365,8 +364,9 @@
     input.disabled = true;
     document.getElementById('sendBtn').disabled = true;
 
-    // Hide chips after first question
+    // Remove existing chips before sending
     document.querySelectorAll('.chips').forEach(el => el.remove());
+    usedSuggestions.add(question);
 
     addUserMessage(question);
     const { bubble, sourcesEl } = addBotPlaceholder();
@@ -426,6 +426,21 @@
 
       conversationHistory.push({ role: 'user', content: question });
       conversationHistory.push({ role: 'assistant', content: fullText });
+
+      // Append remaining suggestion chips below this answer
+      const remaining = SUGGESTIONS.filter(s => !usedSuggestions.has(s));
+      if (remaining.length > 0) {
+        const chipsEl = document.createElement('div');
+        chipsEl.className = 'chips';
+        remaining.forEach(q => {
+          const btn = document.createElement('button');
+          btn.className = 'chip';
+          btn.textContent = q;
+          btn.onclick = () => sendQuestion(q);
+          chipsEl.appendChild(btn);
+        });
+        sourcesEl.after(chipsEl);
+      }
 
     } catch (err) {
       bubble.textContent = `Error: ${err.message}`;
