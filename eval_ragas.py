@@ -45,39 +45,39 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 TEST_CASES = [
     {
         "question": "What projects has Tiago built?",
-        "reference": "Tiago has built three main projects: (1) Odys, a WhatsApp-first scheduling SaaS for freelance professionals in Brazil, built entirely solo; (2) A RAG Career Chatbot with streaming SSE, section-aware chunking, and local embeddings deployed on Render; (3) An Inspection Management API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT auth, admin roles, and 31 Pytest tests.",
+        "reference": "Tiago has built three main projects: (1) RAG Career Chatbot — AI career assistant with streaming SSE, LangChain, ChromaDB, Groq, deployed on Render. (2) Inspection Management API — REST API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT auth, admin roles, 31 Pytest tests. (3) Odys — WhatsApp-first scheduling SaaS built entirely solo, live at odys.com.br, with Stripe payments and self-hosted WhatsApp API.",
     },
     {
         "question": "What is his AI and ML experience?",
-        "reference": "Tiago has experience with RAG pipelines (LangChain, ChromaDB, fastembed), LLM integration (Groq API, structured output), multimodal AI classification (Llama 3.2 11B Vision for road damage images), YOLOv8 object detection for his MSc thesis on road surface hazard detection, and prompt engineering for production systems.",
+        "reference": "Tiago has experience with RAG (Retrieval-Augmented Generation) — end-to-end pipeline design and implementation. LangChain — orchestration, prompt templates, message history, chains. ChromaDB — vector store, persistent embeddings, metadata filtering. fastembed — local embedding model inference (BAAI/bge-small-en-v1.5). Groq API — LLM inference (Llama 3.1 8B). YOLOv8 (Ultralytics) — object detection, training, evaluation (mAP, precision, recall). PyTorch — model training, GPU-accelerated inference. Scikit-learn — classical ML, evaluation metrics. Claude Code — AI-assisted development workflow.",
     },
     {
         "question": "Tell me about his MSc thesis",
-        "reference": "Tiago's MSc thesis is titled 'Expert System for Road Surface Hazard Detection'. It presents a modular two-component pipeline: a YOLOv8 object detection model identifies road defects from images, and a deterministic rule-based expert system assigns maintenance priority levels (Low/Medium/High). Best result: mAP50 of 0.663 with YOLOv8s. Post-processing reduced noisy detections by 31.2%. Submitted February 2026 at University of Europe for Applied Sciences, Berlin.",
+        "reference": "Tiago's MSc thesis is titled 'Expert System for Road Surface Hazard Detection: A Deep Learning-Based Detection and Maintenance Prioritization Pipeline', submitted in February 2026 at the University of Europe for Applied Sciences, Berlin. It presents a modular two-component pipeline: a YOLOv8 object detection model identifies road surface defects (potholes, cracks) from monocular images, and a deterministic rule-based expert system assigns maintenance priority levels (Low / Medium / High) based on defect type, confidence scores, and detection count. Best result: mAP50 of 0.663 with YOLOv8s, with post-processing reducing noisy detections by 31.2%. The architecture separates perception from reasoning, allowing decision logic to be updated without retraining the model.",
     },
     {
         "question": "How would he turn an API into a developer platform?",
-        "reference": "First talk to early adopters to understand friction. Then focus on three areas: (1) API design — clear versioning, predictable response structures, meaningful error handling; (2) Developer experience — documentation based on real workflows, not just endpoints; (3) Reliability — rate limiting, monitoring, clear latency/uptime expectations.",
+        "reference": "First, talk to early adopters to understand friction. Then focus on three areas: (1) API design — clear versioning, predictable response structures, meaningful error handling; (2) Developer experience — documentation based on real workflows, not just endpoints; (3) Reliability — rate limiting, monitoring, clear latency/uptime expectations.",
     },
     {
         "question": "Show me code examples from the Inspection API",
-        "reference": "The Inspection API has several key code patterns: AI classification service with vision and text paths using Groq SDK, background AI processing with FastAPI BackgroundTask, override tracking with SQLAlchemy hybrid_property, and 31 integration tests. Code is at github.com/tiagorcfortunato/inspection-management-api.",
+        "reference": "The Inspection API has several key code patterns: AI classification service with vision and text paths — vision path uses Groq SDK directly because LangChain's wrapper doesn't properly forward base64 images, text path uses LangChain structured output for type-safe enum results. Background AI processing with FastAPI BackgroundTask — API returns immediately (201 status) while AI classification runs in the background. Override tracking with SQLAlchemy hybrid_property — stores both original AI classification and current human-edited values. 31 integration tests running against a real PostgreSQL database in GitHub Actions CI. Code is at github.com/tiagorcfortunato/inspection-management-api.",
     },
     {
         "question": "Tell me about Odys",
-        "reference": "Odys is a WhatsApp-first SaaS platform built entirely solo for Brazilian freelance professionals. It features self-service booking pages, automated WhatsApp reminders from the professional's own number via self-hosted Evolution API, Stripe payments with PIX, multi-tenant architecture, and Supabase pg_cron for scheduled tasks. It's live in production but Tiago hasn't focused on distribution yet.",
+        "reference": "Odys is a WhatsApp-first SaaS platform built entirely solo — from architecture to production — targeting Brazilian freelance professionals (psychologists, personal trainers, beauty professionals) who manage appointments manually via WhatsApp. Key features include public booking pages at /p/[slug] with real-time availability, automatic WhatsApp reminders sent 24h before appointments via self-hosted Evolution API v2 running on Railway, Stripe payments with PIX, multi-tenant architecture, and Supabase pg_cron for scheduled tasks. Tech stack: Next.js 16, TypeScript, Supabase, Drizzle ORM, Tailwind CSS + shadcn/ui. Live at odys.com.br.",
     },
     {
         "question": "What would he do in his first 30 days at a new company?",
-        "reference": "Understanding before building, but not passively. Go deep into the existing system, current API, and how it's being used — run it locally, explore edge cases, try to break it from a developer's perspective. In parallel, talk to users to understand where the interface creates friction. Identify one or two high-impact improvements and start implementing before end of first month.",
+        "reference": "Understanding before building, but not passively. Go deep into the existing system, the current API, and how it's being used — run it locally, explore edge cases, try to break it from a developer's perspective. In parallel, talk to users to understand where the interface creates friction. Then identify one or two high-impact improvements and start implementing before the end of the first month.",
     },
     {
-        "question": "How many users does Odys have?",
-        "reference": "Odys is live in production but Tiago hasn't focused on distribution yet, so there is no meaningful user traction to claim. His priority has been building the product and validating core workflows technically before pushing for growth.",
+        "question": "What is his tech stack?",
+        "reference": "Backend: Python, FastAPI, PostgreSQL, SQLAlchemy, Drizzle ORM, Pydantic, Alembic, JWT, Pytest. AI & ML: RAG (Retrieval-Augmented Generation), LangChain, ChromaDB, Vector Search, fastembed (BAAI/bge-small-en-v1.5), Groq API (Llama 3.1 8B), YOLOv8 (Ultralytics), PyTorch, Scikit-learn, Pandas, PyMuPDF (fitz). Full-Stack & SaaS: TypeScript, Next.js 16 (App Router), Supabase, Stripe, Resend, Upstash Redis, Evolution API v2, Tailwind CSS + shadcn/ui. DevOps: Docker, GitHub Actions, Vercel, Railway, Render, Git.",
     },
     {
         "question": "What are the limitations of RAG systems?",
-        "reference": "Four main limitations: (1) Retrieval quality — if relevant context isn't retrieved, the answer fails; (2) Hallucinations — even with right context, the model can generate incorrect responses; (3) Latency and cost at scale; (4) Evaluation is hard without labeled ground truth.",
+        "reference": "Four main ones: (1) Retrieval quality — if the relevant context isn't retrieved, the answer fails regardless of the model; (2) Hallucinations — even with the right context, the model can generate incorrect responses; (3) Latency and cost — combining retrieval and generation adds overhead at scale; (4) Evaluation is hard — it's not always obvious how to measure whether retrieval is improving.",
     },
     {
         "question": "What does founder-level ownership mean to him?",

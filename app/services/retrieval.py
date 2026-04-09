@@ -15,6 +15,7 @@ Key design decisions:
 - Hybrid search combines semantic understanding with exact keyword matching
 - RRF fusion doesn't need tuning — it's parameter-free and robust
 - History enrichment only for short queries (prevents context pollution on specific questions)
+- Simple single-pass retrieval (no query expansion) to minimize latency and noise
 - System prompt allows rephrasing but anchors all factual claims to retrieved context
 """
 
@@ -31,36 +32,6 @@ from rank_bm25 import BM25Okapi
 from app.config import settings
 from app.models.schemas import ChatMessage, QueryResponse, Source
 from app.services.embeddings import FastEmbeddings
-
-
-# ─── Query Expansion ────────────────────────────────────────────────────────
-
-def _expand_query(question: str) -> str:
-    """
-    Uses the LLM to generate better search terms from the user's question.
-    E.g., "Tell me about yourself" → "Tiago background experience projects skills Berlin software engineer"
-    This dramatically improves recall by matching more relevant chunks.
-    """
-    llm = ChatGroq(
-        model=settings.llm_model,
-        api_key=settings.groq_api_key,
-        temperature=0,
-    )
-    expansion_prompt = ChatPromptTemplate.from_messages([
-        ("system", (
-            "You are a search query optimizer for a career chatbot about Tiago Fortunato, a software engineer. "
-            "Given a user question, generate a single expanded search query with relevant keywords that would help "
-            "find the answer in a knowledge base about Tiago's projects, skills, experience, and education. "
-            "Output ONLY the expanded query, nothing else. Keep it under 30 words."
-        )),
-        ("human", "{question}"),
-    ])
-    chain = expansion_prompt | llm
-    try:
-        result = chain.invoke({"question": question})
-        return result.content.strip()
-    except Exception:
-        return question  # fallback to original on any error
 
 
 SYSTEM_PROMPT = """You are the Professional Talent Assistant for Tiago Fortunato, a Software Engineer specialized in AI and Backend based in Berlin. Your goal is to help recruiters, hiring managers, and technical interviewers understand Tiago's technical depth and professional journey.
@@ -221,44 +192,16 @@ def _build_search_query(question: str, history: list[ChatMessage]) -> str:
     return f"{context} {question}"
 
 
-def _two_pass_search(question: str, search_query: str, document_id: str | None) -> list[dict]:
-    """
-    Two-pass retrieval for better recall without sacrificing precision:
-    1. Primary search with the original/history-enriched query (high precision)
-    2. Secondary search with LLM-expanded query (catches missed chunks)
-    Results are deduplicated, with primary results prioritized.
-    """
-    # Pass 1: original query (high precision)
-    primary = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
-
-    # Pass 2: expanded query (high recall)
-    expanded = _expand_query(question)
-    if expanded and expanded != question:
-        secondary = _hybrid_search(expanded, document_id, k=settings.retrieval_k // 2)
-    else:
-        secondary = []
-
-    # Deduplicate: keep primary results, add new secondary results
-    seen = {doc["content"][:100] for doc in primary}
-    for doc in secondary:
-        key = doc["content"][:100]
-        if key not in seen:
-            primary.append(doc)
-            seen.add(key)
-
-    return primary[:settings.retrieval_k]
-
-
 def query(question: str, document_id: str | None, history: list[ChatMessage]) -> QueryResponse:
     """
-    Two-pass hybrid search (semantic + BM25) for relevant chunks, then asks the LLM
+    Hybrid search (semantic + BM25) for relevant chunks, then asks the LLM
     to answer taking conversation history into account.
     """
     # 1. Enrich query with history context for better retrieval
     search_query = _build_search_query(question, history)
 
-    # 2. Two-pass search: original + expanded query
-    results = _two_pass_search(question, search_query, document_id)
+    # 2. Hybrid search: semantic + BM25 with RRF fusion
+    results = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
 
     if not results:
         return QueryResponse(
@@ -317,7 +260,7 @@ async def stream_query(
     """Streaming version of query() — yields SSE-formatted lines."""
 
     search_query = _build_search_query(question, history)
-    results = _two_pass_search(question, search_query, document_id)
+    results = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
 
     if not results:
         yield f"data: {json.dumps({'token': 'I could not find relevant information about that topic.'})}\n\n"
