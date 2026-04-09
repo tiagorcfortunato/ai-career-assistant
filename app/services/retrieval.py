@@ -223,6 +223,7 @@ def query(question: str, document_id: str | None, history: list[ChatMessage]) ->
     llm = ChatGroq(
         model=settings.llm_model,
         api_key=settings.groq_api_key,
+        temperature=0,
     )
     chain = prompt | llm
 

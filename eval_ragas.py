@@ -37,7 +37,7 @@ class FastEmbeddings(Embeddings):
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
-API_URL = os.getenv("EVAL_API_URL", "https://rag-pdf-chatbot-0w9z.onrender.com")
+API_URL = os.getenv("EVAL_API_URL", "https://chatbot.tifortunato.com")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # ── Test dataset: questions + ground truth references ──────────────────────
@@ -56,20 +56,20 @@ TEST_CASES = [
         "reference": "Tiago's MSc thesis is titled 'Expert System for Road Surface Hazard Detection'. It presents a modular two-component pipeline: a YOLOv8 object detection model identifies road defects from images, and a deterministic rule-based expert system assigns maintenance priority levels (Low/Medium/High). Best result: mAP50 of 0.663 with YOLOv8s. Post-processing reduced noisy detections by 31.2%. Submitted February 2026 at University of Europe for Applied Sciences, Berlin.",
     },
     {
-        "question": "Why is he interested in FIDgate?",
-        "reference": "Three reasons: (1) the domain — Tiago originally studied renewable energy during his mechanical engineering degree; (2) the level of ownership — he wants to own real problems end to end, not just implement tickets; (3) the problem itself — replacing manual Excel-based energy decisions with autonomous optimization systems, which is technically challenging and has real-world impact.",
+        "question": "How would he turn an API into a developer platform?",
+        "reference": "First talk to early adopters to understand friction. Then focus on three areas: (1) API design — clear versioning, predictable response structures, meaningful error handling; (2) Developer experience — documentation based on real workflows, not just endpoints; (3) Reliability — rate limiting, monitoring, clear latency/uptime expectations.",
     },
     {
-        "question": "How would he turn an API into a developer platform?",
-        "reference": "First talk to early adopters to understand friction. Then focus on three areas: (1) API design — clear versioning, predictable response structures, meaningful error handling; (2) Developer experience — documentation based on real workflows, not just endpoints; (3) Reliability — rate limiting, monitoring, clear latency/uptime expectations. Plus an AI layer for interpretability.",
+        "question": "Show me code examples from the Inspection API",
+        "reference": "The Inspection API has several key code patterns: AI classification service with vision and text paths using Groq SDK, background AI processing with FastAPI BackgroundTask, override tracking with SQLAlchemy hybrid_property, and 31 integration tests. Code is at github.com/tiagorcfortunato/inspection-management-api.",
     },
     {
         "question": "Tell me about Odys",
         "reference": "Odys is a WhatsApp-first SaaS platform built entirely solo for Brazilian freelance professionals. It features self-service booking pages, automated WhatsApp reminders from the professional's own number via self-hosted Evolution API, Stripe payments with PIX, multi-tenant architecture, and Supabase pg_cron for scheduled tasks. It's live in production but Tiago hasn't focused on distribution yet.",
     },
     {
-        "question": "What would he do in his first 30 days at FIDgate?",
-        "reference": "Understanding before building, but not passively. Go deep into the decision engine, current API, and how it's being used — run it locally, explore edge cases, try to break it. In parallel, talk to early adopters to understand friction. Identify one or two high-impact improvements and start implementing before end of first month.",
+        "question": "What would he do in his first 30 days at a new company?",
+        "reference": "Understanding before building, but not passively. Go deep into the existing system, current API, and how it's being used — run it locally, explore edge cases, try to break it from a developer's perspective. In parallel, talk to users to understand where the interface creates friction. Identify one or two high-impact improvements and start implementing before end of first month.",
     },
     {
         "question": "How many users does Odys have?",
