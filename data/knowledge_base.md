@@ -4,6 +4,25 @@
 
 ---
 
+## Quick Reference — Common Recruiter Questions
+
+### Tiago's Projects Summary
+Tiago has built three main projects: (1) [RAG Career Chatbot](https://github.com/tiagorcfortunato/rag-pdf-chatbot) — a production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application with streaming SSE, LangChain, ChromaDB, Groq, deployed on AWS EC2 with Docker, Nginx, and HTTPS. (2) [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) — a production-grade REST API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT authentication, admin roles, and 31 Pytest integration tests running against real PostgreSQL in GitHub Actions CI. (3) [Odys](https://odys.com.br) — a WhatsApp-first scheduling SaaS built entirely solo for Brazilian freelance professionals, with Stripe payments, self-hosted Evolution API for WhatsApp reminders, multi-tenant architecture, and Supabase pg_cron.
+
+### Tiago's Full Tech Stack
+Backend: Python, FastAPI, PostgreSQL, SQLAlchemy, Drizzle ORM, Pydantic, Alembic, JWT (python-jose + bcrypt), Pytest. AI & Machine Learning: RAG (Retrieval-Augmented Generation), LangChain, ChromaDB, Vector Search, fastembed (BAAI/bge-small-en-v1.5), Groq API (Llama 3.1 8B), YOLOv8 (Ultralytics), PyTorch, Scikit-learn, Pandas, PyMuPDF (fitz), Claude Code. Full-Stack & SaaS: TypeScript, Next.js 16 (App Router), Supabase, Stripe, Resend, Upstash Redis, Evolution API v2, Tailwind CSS + shadcn/ui. DevOps & Infrastructure: Docker, GitHub Actions CI/CD, Vercel, Railway, Render, AWS EC2, Nginx, Let's Encrypt, Git.
+
+### Tiago's AI and ML Experience
+Tiago has hands-on experience with: RAG (Retrieval-Augmented Generation) — end-to-end pipeline design and implementation including section-aware chunking, hybrid search (BM25 + semantic), and streaming responses. LangChain — orchestration, prompt templates, message history, chains, structured output. ChromaDB — vector store, persistent embeddings, metadata filtering. fastembed — local embedding model inference (BAAI/bge-small-en-v1.5). Groq API — LLM inference (Llama 3.1 8B) and multimodal vision (Llama 3.2 11B Vision). YOLOv8 (Ultralytics) — object detection, training, evaluation (mAP, precision, recall) for his MSc thesis on road hazard detection. PyTorch — model training, GPU-accelerated inference. Scikit-learn — classical ML, evaluation metrics. Claude Code — AI-assisted development workflow.
+
+### About Odys
+Odys is a WhatsApp-first SaaS platform built entirely solo by Tiago — from architecture to production — targeting Brazilian freelance professionals (psychologists, personal trainers, beauty professionals) who manage appointments manually via WhatsApp. Key features: public booking pages at /p/[slug] with real-time availability calendar, automatic WhatsApp reminders sent 24h before appointments via self-hosted Evolution API v2 running on Railway (Docker), Stripe payments with PIX (Brazilian payment method), multi-tenant architecture where each professional gets isolated data, and Supabase pg_cron for scheduled reminder jobs. Tech stack: Next.js 16, TypeScript, Supabase (PostgreSQL + Auth), Drizzle ORM, Tailwind CSS + shadcn/ui, Stripe, Resend (email), Upstash Redis, Sentry, PostHog. Live at odys.com.br.
+
+### RAG Limitations
+Four main limitations of RAG systems: (1) Retrieval quality — if the relevant context isn't retrieved, the answer fails regardless of the model; (2) Hallucinations — even with the right context, the model can generate incorrect responses; (3) Latency and cost — combining retrieval and generation adds overhead at scale; (4) Evaluation is hard — it's not always obvious how to measure whether retrieval is improving.
+
+---
+
 ## About Tiago
 
 Tiago Fortunato is a **Full-Stack Developer and Founder** based in **Berlin, Germany**. He holds an **MSc in Software Engineering** from the University of Europe for Applied Sciences (completed 2026), with a background in Mechanical Engineering (BSc, UERJ, Brazil).
