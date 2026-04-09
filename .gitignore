@@ -18,6 +18,9 @@ venv/
 # Uploads (ignore PDFs but keep knowledge base)
 data/*.pdf
 
+# SSH keys
+*.pem
+
 # IDE
 .vscode/
 .idea/

@@ -501,3 +501,299 @@ Yes. Tiago has a permanent residence permit and full work authorization in Germa
 **"What's one thing you're not good at yet?"**
 
 Distributed systems at scale. He's built reliable systems for current load levels, but hasn't operated infrastructure at the scale of thousands of concurrent users. What he does well is identifying when a system is approaching that limit and designing for it before it becomes a problem.
+
+---
+
+## Code Examples & Architecture Deep Dives
+
+This section provides real code examples from Tiago's projects with links to the full source code on GitHub. These are meant to show how Tiago writes production code — clean, well-structured, and with clear design decisions.
+
+### RAG Chatbot — Hybrid Search Implementation
+
+GitHub: https://github.com/tiagorcfortunato/rag-pdf-chatbot
+
+The RAG Chatbot uses a hybrid search approach combining semantic similarity (ChromaDB embeddings) with keyword matching (BM25), fused using Reciprocal Rank Fusion. This means it finds results both by meaning AND by exact keywords — if a recruiter asks about "FastAPI", BM25 catches the exact term even if the embedding doesn't perfectly capture it.
+
+**Hybrid Search with RRF** (see full code: https://github.com/tiagorcfortunato/rag-pdf-chatbot/blob/feature/recruiter-persona/app/services/retrieval.py):
+```python
+def _hybrid_search(query, document_id, k=10):
+    # 1. Semantic search (meaning-based)
+    semantic_results = vector_store.similarity_search(query, k=k*2)
+    # 2. BM25 keyword search (exact matching)
+    bm25_results = _bm25_search(query, k=k*2)
+    # 3. Reciprocal Rank Fusion combines both
+    for rank, doc in enumerate(semantic_results):
+        rrf_scores[key] += 1.0 / (rank + 60)
+    for rank, doc in enumerate(bm25_results):
+        rrf_scores[key] += 1.0 / (rank + 60)
+    # Return top-k by fused score
+```
+
+**Section-Aware Chunking** (see full code: https://github.com/tiagorcfortunato/rag-pdf-chatbot/blob/feature/recruiter-persona/app/services/ingestion.py):
+Instead of naively splitting every 500 characters (which breaks sentences and loses context), Tiago built a custom chunking system. For PDFs, it analyzes font sizes across all text spans using PyMuPDF, computes the median font size, and flags anything 15% larger as a heading. For Markdown, it splits by ATX headings. This preserves document structure so each chunk has coherent context.
+
+```python
+# Font-size based heading detection
+median_size = sorted(all_sizes)[len(all_sizes) // 2]
+heading_threshold = median_size * 1.15  # 15% larger = heading
+is_heading = max_size >= heading_threshold and len(line_text) < 60
+```
+
+**Streaming SSE** (see full code: https://github.com/tiagorcfortunato/rag-pdf-chatbot/blob/feature/recruiter-persona/app/services/retrieval.py):
+The chatbot streams responses token-by-token using Server-Sent Events (SSE), creating a ChatGPT-like experience where text appears word by word. The backend yields SSE-formatted JSON lines and the frontend consumes them with Fetch API ReadableStream.
+
+```python
+async def stream_query(question, document_id, history):
+    # First yield sources for attribution
+    yield f"data: {json.dumps({'sources': sources})}\n\n"
+    # Then stream tokens one by one
+    async for chunk in chain.astream({...}):
+        yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+    yield "data: [DONE]\n\n"
+```
+
+**Project structure:**
+```
+rag-pdf-chatbot/
+├── app/
+│   ├── api/routes.py              # Upload, query, stream endpoints
+│   ├── services/
+│   │   ├── ingestion.py           # PDF/MD → chunks → ChromaDB
+│   │   ├── retrieval.py           # Hybrid search + RAG pipeline
+│   │   └── embeddings.py          # Local embedding wrapper
+│   ├── models/schemas.py          # Pydantic request/response models
+│   ├── config.py                  # Pydantic settings from env
+│   ├── main.py                    # FastAPI app + lifespan startup
+│   └── static/index.html          # Chat UI
+├── tests/                         # 11 Pytest tests
+├── data/knowledge_base.md         # Career knowledge base
+├── Dockerfile                     # Pre-ingests KB at build time
+└── docker-compose.yml
+```
+
+### Inspection Management API — AI-Powered Classification
+
+GitHub: https://github.com/tiagorcfortunato/inspection-management-api
+Live API Docs: https://inspection-management-api.onrender.com/docs
+Live Dashboard: https://inspection-dashboard.vercel.app
+
+This is a full production REST API where inspectors report road damage with photos, and an AI model (Groq Llama 3.2 11B Vision) automatically classifies the damage type and severity with an explainable rationale. Humans can override AI decisions, and overrides are tracked transparently.
+
+**AI Classification Service** (see full code: https://github.com/tiagorcfortunato/inspection-management-api/blob/main/app/services/ai_service.py):
+The AI service has two paths: vision (for images) and text-only (for notes). For images, it uses the Groq SDK directly because LangChain's wrapper doesn't properly forward base64 images. For text, it uses LangChain's structured output for type-safe enum results.
+
+```python
+# Vision path — direct Groq SDK for proper image handling
+async def _classify_with_image(self, notes, image_b64):
+    # Compress image first (max 1024px, JPEG 75%)
+    compressed = self._compress_image(image_b64)
+    response = await self.groq_client.chat.completions.create(
+        model="llama-3.2-11b-vision-preview",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": classification_prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{compressed}"}}
+            ]
+        }]
+    )
+
+# Text path — LangChain structured output for type safety
+async def _classify_with_text(self, notes):
+    chain = self.text_llm.with_structured_output(AIClassification)
+    return await chain.ainvoke(classification_prompt)
+```
+
+**Background AI Processing** (see full code: https://github.com/tiagorcfortunato/inspection-management-api/blob/main/app/services/inspection_service.py):
+When an inspection is created, the API returns immediately (201 status) while AI classification runs in the background. The frontend polls every 3 seconds until processing is complete. This pattern prevents request timeouts and keeps the UX responsive.
+
+```python
+# Router creates inspection and dispatches AI in background
+@router.post("/inspections", status_code=201)
+async def create_inspection(data, background_tasks, db, current_user):
+    inspection = inspection_service.create_inspection(db, data, current_user.id)
+    background_tasks.add_task(process_inspection_with_ai, inspection.id)
+    return inspection
+```
+
+**Override Tracking with Hybrid Properties** (see full code: https://github.com/tiagorcfortunato/inspection-management-api/blob/main/app/models/inspection.py):
+The data model stores both the original AI classification and the current (possibly human-edited) values. A SQLAlchemy hybrid_property computes whether the human has overridden the AI — no redundant storage, always accurate.
+
+```python
+class Inspection(Base):
+    damage_type = Column(String)          # Current (editable by human)
+    ai_damage_type = Column(String)       # Original AI classification (immutable)
+    ai_severity = Column(String)          # Original AI severity
+    ai_rationale = Column(String)         # Why AI chose this classification
+
+    @hybrid_property
+    def is_ai_overridden(self):
+        return (self.damage_type != self.ai_damage_type or
+                self.severity != self.ai_severity)
+```
+
+**Database Evolution with Alembic Migrations** (see migrations: https://github.com/tiagorcfortunato/inspection-management-api/tree/main/alembic/versions):
+The schema evolved through 5 Alembic migrations: initial tables → admin roles → AI classification fields → image storage → override tracking. Each migration is version-controlled and automatically runs on deployment.
+
+**31 Integration Tests** (see full test file: https://github.com/tiagorcfortunato/inspection-management-api/blob/main/tests/test_api.py):
+Tests run against a real PostgreSQL database (not mocks) in GitHub Actions CI. Covers auth, CRUD, data isolation between users, filtering, pagination, sorting, admin endpoints, and validation. The CI pipeline spins up a Postgres service container with health checks before running tests.
+
+Test categories:
+- Auth: register, login, duplicate email, wrong password
+- CRUD: create, list, get, update, delete
+- Data isolation: user A cannot access user B's inspections
+- Filtering: by severity, damage_type, status
+- Pagination: limit, offset, boundary cases
+- Sorting: ascending/descending
+- Admin: cross-user access, 403 for non-admins
+- Validation: invalid enums → 422
+
+**Project structure:**
+```
+inspection-management-api/
+├── app/
+│   ├── core/
+│   │   ├── config.py              # Pydantic settings
+│   │   ├── deps.py                # FastAPI dependency injection
+│   │   ├── enums.py               # DamageType, SeverityLevel, Status, Role
+│   │   ├── limiter.py             # Rate limiting config
+│   │   └── security.py            # JWT token creation/validation
+│   ├── models/
+│   │   ├── user.py                # User ORM model
+│   │   └── inspection.py          # Inspection ORM + hybrid properties
+│   ├── routers/
+│   │   ├── auth.py                # Register/login endpoints
+│   │   ├── inspections.py         # User CRUD (scoped to own data)
+│   │   └── admin.py               # Admin endpoints (all users)
+│   ├── schemas/                   # Pydantic request/response models
+│   ├── services/
+│   │   ├── ai_service.py          # Groq Vision + LangChain classification
+│   │   ├── auth_service.py        # Auth business logic
+│   │   └── inspection_service.py  # CRUD + background AI
+│   ├── database.py                # SQLAlchemy engine + sessions
+│   └── main.py                    # FastAPI app
+├── alembic/versions/              # 5 database migrations
+├── tests/test_api.py              # 31 integration tests
+├── .github/workflows/ci.yml       # GitHub Actions CI
+├── Dockerfile
+└── docker-compose.yml
+```
+
+**API endpoints:**
+```
+POST /auth/register              — Create account
+POST /auth/login                 — Get JWT token
+
+GET    /inspections              — List own (filter, sort, paginate)
+POST   /inspections              — Create + trigger background AI
+GET    /inspections/{id}         — Get single inspection
+PUT    /inspections/{id}         — Update (triggers override tracking)
+DELETE /inspections/{id}         — Delete
+
+GET    /admin/inspections        — All users' inspections
+PUT    /admin/inspections/{id}   — Admin update
+DELETE /admin/inspections/{id}   — Admin delete
+```
+
+### Inspection Dashboard — Frontend
+
+GitHub: https://github.com/tiagorcfortunato/inspection-dashboard
+Live: https://inspection-dashboard.vercel.app
+
+The companion frontend for the Inspection Management API. Built with vanilla HTML, CSS, and JavaScript — no React, no build tools. Deployed on Vercel.
+
+Key implementation details:
+- **AI Status Polling**: When an inspection is created, the frontend polls `GET /inspections/{id}` every 3 seconds until `is_ai_processed` is true, then displays the AI classification
+- **XSS Prevention**: All dynamic content uses `textContent` instead of `innerHTML`
+- **Memory Safety**: All polling intervals are tracked in an `activePollers` object and cleaned up on logout to prevent memory leaks
+- **Image Compression**: Uploaded images are resized to max 800px before sending to the API
+
+### Odys — WhatsApp-First SaaS (Private Repo)
+
+Live product: https://odys.com.br
+
+Odys is a production SaaS built entirely solo by Tiago. It's a scheduling and client management platform for Brazilian freelance professionals (psychologists, trainers, beauty professionals). The key innovation is deep WhatsApp integration — reminders come from the professional's own WhatsApp number, not a generic bot.
+
+**Technical architecture highlights:**
+- **Multi-tenant**: Each professional gets an isolated booking page at `/p/[slug]`
+- **WhatsApp reminders**: Self-hosted Evolution API v2 on Railway (Docker). Professionals scan a QR code to connect their number. Supabase pg_cron triggers `/api/cron/reminders` periodically to send messages via the WhatsApp API
+- **Payments**: Stripe subscriptions + PIX (Brazilian payment method) with webhook handling
+- **Rate limiting**: Upstash Redis with @upstash/ratelimit
+- **Error monitoring**: Sentry (edge + server)
+- **Tech stack**: Next.js 16, TypeScript, Tailwind CSS, Supabase (PostgreSQL + Auth), Drizzle ORM, Stripe, Resend (email), Railway
+
+**Notable challenge solved:**
+PgBouncer transaction mode breaks Drizzle ORM's connection pooling. Tiago resolved this by adding `pgbouncer=true&connection_limit=1` to the DATABASE_URL — no need to switch away from PgBouncer.
+
+---
+
+## Deployment & Infrastructure
+
+### Current Deployment Architecture
+
+Tiago deploys across multiple platforms, choosing each based on the use case:
+
+| Project | Platform | Why |
+|---|---|---|
+| RAG Chatbot | AWS EC2 (t3.micro) + Docker | Full control, always-on, custom domain with HTTPS |
+| Inspection API | Render (free tier) | Quick deploys, managed infrastructure |
+| Inspection Dashboard | Vercel | Static hosting, instant deploys |
+| Odys (app) | Vercel | Next.js optimized hosting |
+| Odys (WhatsApp API) | Railway | Docker container hosting |
+| Portfolio | Vercel | Static site |
+
+**Custom domain setup**: `tifortunato.com` (Namecheap) with subdomains:
+- `tifortunato.com` → Portfolio (Vercel)
+- `chatbot.tifortunato.com` → RAG Chatbot (AWS EC2)
+
+**AWS EC2 deployment includes:**
+- Docker containerization
+- Nginx reverse proxy
+- Let's Encrypt SSL (auto-renewal via cron)
+- Pre-ingested knowledge base at Docker build time
+
+### CI/CD Pipelines
+
+Both main projects have GitHub Actions CI/CD:
+
+**RAG Chatbot CI** (see: https://github.com/tiagorcfortunato/rag-pdf-chatbot/blob/feature/recruiter-persona/.github/workflows/ci.yml):
+- Runs on every push/PR to main
+- Python 3.11 + Pytest
+- Tests upload, query, streaming, and health endpoints
+
+**Inspection API CI** (see: https://github.com/tiagorcfortunato/inspection-management-api/blob/main/.github/workflows/ci.yml):
+- Runs on every push/PR to main
+- Spins up a PostgreSQL 15 service container with health checks
+- Runs Alembic migrations before tests
+- 31 integration tests against real database
+
+---
+
+## Engineering Patterns Across Projects
+
+### Consistent Architecture
+All backend projects follow the same layered pattern:
+- **Routers** → HTTP handlers, input validation
+- **Services** → Business logic, AI calls, database queries
+- **Models** → ORM entities, data relationships
+- **Schemas** → Pydantic request/response validation
+- **Core** → Config, security, dependencies
+
+### Testing Philosophy
+- Integration tests over unit tests — test real behavior, not mocks
+- Real databases in CI (PostgreSQL service containers)
+- Every PR triggers automated tests
+- Combined 42 tests across projects (31 + 11)
+
+### AI Integration Patterns
+- Background processing for AI calls (never block the request)
+- Structured output for type-safe LLM responses
+- Human-in-the-loop: AI suggests, humans decide
+- Explainable AI: every classification includes a rationale
+
+### Security Patterns
+- JWT authentication with bcrypt password hashing
+- Per-user data isolation at the query level
+- Rate limiting on API endpoints
+- CORS configuration for cross-origin requests
+- XSS prevention in frontends (textContent over innerHTML)
