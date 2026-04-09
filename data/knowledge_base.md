@@ -100,10 +100,10 @@ Python, PyTorch, YOLOv8 (Ultralytics), Scikit-learn, Pandas, Linux, GPU-accelera
 
 Tiago has built three main projects: (1) RAG Career Chatbot — AI career assistant with streaming SSE, LangChain, ChromaDB, Groq, deployed on Render. (2) Inspection Management API — REST API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT auth, admin roles, 31 Pytest tests. (3) Odys — WhatsApp-first scheduling SaaS built entirely solo, live at odys.com.br, with Stripe payments and self-hosted WhatsApp API.
 
-### 1. RAG Career Chatbot (2026)
+### 1. [RAG Career Chatbot](https://github.com/tiagorcfortunato/rag-pdf-chatbot) (2026)
 
-**Repository:** github.com/tiagorcfortunato/rag-pdf-chatbot
-**Live Demo:** rag-pdf-chatbot-0w9z.onrender.com
+**Repository:** [github.com/tiagorcfortunato/rag-pdf-chatbot](https://github.com/tiagorcfortunato/rag-pdf-chatbot)
+**Live Demo:** [chatbot.tifortunato.com](https://chatbot.tifortunato.com)
 
 A production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application. It serves as Tiago's interactive professional profile — recruiters and hiring managers can ask natural-language questions about his experience, projects, skills, and motivations, and receive accurate, sourced answers in real time with streaming responses.
 
@@ -178,12 +178,12 @@ Frontend: real-time markdown rendering + source attribution
 
 ---
 
-### 2. Inspection Management API (2026)
+### 2. [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) (2026)
 
-**Repository:** github.com/tiagorcfortunato/inspection-management-api
-**Live API:** inspection-management-api.onrender.com
-**Live Dashboard:** inspection-dashboard.vercel.app
-**API Docs:** inspection-management-api.onrender.com/docs
+**Repository:** [github.com/tiagorcfortunato/inspection-management-api](https://github.com/tiagorcfortunato/inspection-management-api)
+**Live API:** [inspection-management-api.onrender.com](https://inspection-management-api.onrender.com)
+**Live Dashboard:** [inspection-dashboard.vercel.app](https://inspection-dashboard.vercel.app)
+**API Docs:** [inspection-management-api.onrender.com/docs](https://inspection-management-api.onrender.com/docs)
 
 A production-grade REST API for infrastructure inspection management with **AI-powered damage classification**, role-based access control, and a companion React dashboard. Demonstrates clean layered backend architecture, comprehensive test coverage, and real AI integration.
 
@@ -269,9 +269,9 @@ DELETE /admin/inspections/{id}
 
 ---
 
-### 3. Odys — Scheduling SaaS for Freelance Professionals (2026–present)
+### 3. [Odys](https://odys.com.br) — Scheduling SaaS for Freelance Professionals (2026–present)
 
-**Live Product:** odys.com.br
+**Live Product:** [odys.com.br](https://odys.com.br)
 
 A WhatsApp-first SaaS platform built entirely solo — from architecture to production — targeting Brazilian freelance professionals (psychologists, personal trainers, beauty professionals, etc.) who manage appointments manually via WhatsApp.
 
@@ -508,9 +508,7 @@ Distributed systems at scale. He's built reliable systems for current load level
 
 This section provides real code examples from Tiago's projects with links to the full source code on GitHub. These are meant to show how Tiago writes production code — clean, well-structured, and with clear design decisions.
 
-### RAG Chatbot — Hybrid Search Implementation
-
-GitHub: https://github.com/tiagorcfortunato/rag-pdf-chatbot
+### [RAG Chatbot](https://github.com/tiagorcfortunato/rag-pdf-chatbot) — Hybrid Search Implementation
 
 The RAG Chatbot uses a hybrid search approach combining semantic similarity (ChromaDB embeddings) with keyword matching (BM25), fused using Reciprocal Rank Fusion. This means it finds results both by meaning AND by exact keywords — if a recruiter asks about "FastAPI", BM25 catches the exact term even if the embedding doesn't perfectly capture it.
 
@@ -571,11 +569,10 @@ rag-pdf-chatbot/
 └── docker-compose.yml
 ```
 
-### Inspection Management API — AI-Powered Classification
+### [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) — AI-Powered Classification
 
-GitHub: https://github.com/tiagorcfortunato/inspection-management-api
-Live API Docs: https://inspection-management-api.onrender.com/docs
-Live Dashboard: https://inspection-dashboard.vercel.app
+**Live API Docs:** [inspection-management-api.onrender.com/docs](https://inspection-management-api.onrender.com/docs)
+**Live Dashboard:** [inspection-dashboard.vercel.app](https://inspection-dashboard.vercel.app)
 
 This is a full production REST API where inspectors report road damage with photos, and an AI model (Groq Llama 3.2 11B Vision) automatically classifies the damage type and severity with an explainable rationale. Humans can override AI decisions, and overrides are tracked transparently.
 
@@ -695,10 +692,9 @@ PUT    /admin/inspections/{id}   — Admin update
 DELETE /admin/inspections/{id}   — Admin delete
 ```
 
-### Inspection Dashboard — Frontend
+### [Inspection Dashboard](https://github.com/tiagorcfortunato/inspection-dashboard) — Frontend
 
-GitHub: https://github.com/tiagorcfortunato/inspection-dashboard
-Live: https://inspection-dashboard.vercel.app
+**Live:** [inspection-dashboard.vercel.app](https://inspection-dashboard.vercel.app)
 
 The companion frontend for the Inspection Management API. Built with vanilla HTML, CSS, and JavaScript — no React, no build tools. Deployed on Vercel.
 
