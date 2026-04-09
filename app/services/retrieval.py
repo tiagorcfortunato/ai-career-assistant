@@ -33,11 +33,42 @@ from app.models.schemas import ChatMessage, QueryResponse, Source
 from app.services.embeddings import FastEmbeddings
 
 
+# ─── Query Expansion ────────────────────────────────────────────────────────
+
+def _expand_query(question: str) -> str:
+    """
+    Uses the LLM to generate better search terms from the user's question.
+    E.g., "Tell me about yourself" → "Tiago background experience projects skills Berlin software engineer"
+    This dramatically improves recall by matching more relevant chunks.
+    """
+    llm = ChatGroq(
+        model=settings.llm_model,
+        api_key=settings.groq_api_key,
+        temperature=0,
+    )
+    expansion_prompt = ChatPromptTemplate.from_messages([
+        ("system", (
+            "You are a search query optimizer for a career chatbot about Tiago Fortunato, a software engineer. "
+            "Given a user question, generate a single expanded search query with relevant keywords that would help "
+            "find the answer in a knowledge base about Tiago's projects, skills, experience, and education. "
+            "Output ONLY the expanded query, nothing else. Keep it under 30 words."
+        )),
+        ("human", "{question}"),
+    ])
+    chain = expansion_prompt | llm
+    try:
+        result = chain.invoke({"question": question})
+        return result.content.strip()
+    except Exception:
+        return question  # fallback to original on any error
+
+
 SYSTEM_PROMPT = """You are the Professional Talent Assistant for Tiago Fortunato, a Software Engineer specialized in AI and Backend based in Berlin. Your goal is to help recruiters, hiring managers, and technical interviewers understand Tiago's technical depth and professional journey.
 
 Rules:
 - You may rephrase, restructure, and improve the clarity of information from the context. Sound natural and professional, not robotic.
 - However, every FACTUAL CLAIM must be grounded in the context. You may say things differently, but you must not invent facts, metrics, outcomes, or achievements that are not in the context. For example: if the context says "live in production but no meaningful user traction yet", do NOT say "strong user base" or "proven track record of scalability".
+- If the context does not contain enough information to fully answer the question, clearly state what you know from the context and what you don't. NEVER fill gaps with assumptions or general knowledge. Saying "I don't have that specific information" is better than guessing.
 - ALWAYS respond in English by default. Only switch to another language if the user explicitly writes their question in that language (Portuguese, German, etc.).
 - The context chunks may be labeled with subsection titles — they all pertain to Tiago's profile.
 - If you genuinely don't have the information, say so briefly and pivot to a related strength Tiago does have. You may suggest follow-up questions, but ONLY ones that highlight Tiago's strengths.
@@ -179,18 +210,29 @@ def _get_vector_store() -> Chroma:
 
 def _build_search_query(question: str, history: list[ChatMessage]) -> str:
     """
-    If there's conversation history AND the query is short/ambiguous,
-    enrich the search query with recent context. This helps resolve
-    references like "tell me more about the first one".
+    Builds an optimized search query using two strategies:
 
-    Specific queries (5+ words) are not enriched — prepending long
-    prior answers would dilute the actual search intent.
+    1. History enrichment: If query is short (<5 words) and has history,
+       prepend recent context to resolve references like "tell me more"
+    2. Query expansion: Use the LLM to generate better search keywords.
+       E.g., "Tell me about yourself" → "Tiago background skills projects experience"
+
+    Both the original (or history-enriched) query AND the expanded query
+    are combined for maximum recall.
     """
-    if not history or len(question.split()) >= 5:
-        return question
-    last_exchange = history[-2:] if len(history) >= 2 else history
-    context = " ".join(m.content for m in last_exchange)
-    return f"{context} {question}"
+    base_query = question
+    if history and len(question.split()) < 5:
+        last_exchange = history[-2:] if len(history) >= 2 else history
+        context = " ".join(m.content for m in last_exchange)
+        base_query = f"{context} {question}"
+
+    # Expand query with LLM-generated search terms
+    expanded = _expand_query(question)
+
+    # Combine both for broader retrieval
+    if expanded and expanded != question:
+        return f"{base_query} {expanded}"
+    return base_query
 
 
 def query(question: str, document_id: str | None, history: list[ChatMessage]) -> QueryResponse:
@@ -276,7 +318,7 @@ async def stream_query(
         ("human", "{question}"),
     ])
 
-    llm = ChatGroq(model=settings.llm_model, api_key=settings.groq_api_key)
+    llm = ChatGroq(model=settings.llm_model, api_key=settings.groq_api_key, temperature=0)
     chain = prompt | llm
 
     lc_history = []
