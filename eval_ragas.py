@@ -20,7 +20,7 @@ from ragas import evaluate, EvaluationDataset, SingleTurnSample
 from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from fastembed import TextEmbedding
 from langchain_core.embeddings import Embeddings
 
@@ -38,7 +38,7 @@ class FastEmbeddings(Embeddings):
 # ── Config ─────────────────────────────────────────────────────────────────
 
 API_URL = os.getenv("EVAL_API_URL", "https://chatbot.tifortunato.com")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # ── Test dataset: questions + ground truth references ──────────────────────
 
@@ -86,19 +86,27 @@ TEST_CASES = [
 ]
 
 
-def get_rag_response(question: str) -> dict:
+def get_rag_response(question: str, retries: int = 3) -> dict:
     """Query the live chatbot API and return answer + retrieved contexts."""
-    res = httpx.post(
-        f"{API_URL}/api/query",
-        json={"question": question, "document_id": None, "history": []},
-        timeout=30,
-    )
-    res.raise_for_status()
-    data = res.json()
-    return {
-        "answer": data["answer"],
-        "contexts": [s["content"] for s in data.get("sources", [])],
-    }
+    import time
+    for attempt in range(retries):
+        try:
+            res = httpx.post(
+                f"{API_URL}/api/query",
+                json={"question": question, "document_id": None, "history": []},
+                timeout=60,
+            )
+            res.raise_for_status()
+            data = res.json()
+            time.sleep(8)  # respect Groq rate limits
+            return {
+                "answer": data["answer"],
+                "contexts": [s["content"] for s in data.get("sources", [])],
+            }
+        except (httpx.ReadTimeout, httpx.HTTPStatusError) as e:
+            print(f"    Retry {attempt+1}/{retries}: {e}")
+            time.sleep(15)
+    raise RuntimeError(f"Failed after {retries} retries: {question}")
 
 
 def build_evaluation_dataset() -> EvaluationDataset:
@@ -125,9 +133,9 @@ def main():
     print("\n=== RAGAS Evaluation for Career Chatbot ===")
     print(f"    API: {API_URL}\n")
 
-    # 1. Set up evaluator LLM (Groq as the judge) and embeddings (local fastembed)
+    # 1. Set up evaluator LLM (Gemini as the judge) and embeddings (local fastembed)
     evaluator_llm = LangchainLLMWrapper(
-        ChatGroq(model="llama-3.1-8b-instant", api_key=GROQ_API_KEY)
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY)
     )
     evaluator_embeddings = LangchainEmbeddingsWrapper(FastEmbeddings())
 

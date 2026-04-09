@@ -15,8 +15,9 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Uploads (ignore PDFs but keep knowledge base)
+# Uploads (ignore user-uploaded PDFs but keep thesis)
 data/*.pdf
+!data/Tiago_Fortunato_Expert_System_Road_Hazard_Detection.pdf
 
 # SSH keys
 *.pem

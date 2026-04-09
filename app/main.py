@@ -26,6 +26,7 @@ from app.api.routes import router
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_BASE_PATH = Path("data/knowledge_base.md")
+THESIS_PDF_PATH = Path("data/Tiago_Fortunato_Expert_System_Road_Hazard_Detection.pdf")
 
 
 def _is_already_ingested(filename: str) -> bool:
@@ -51,6 +52,19 @@ async def lifespan(app: FastAPI):
             )
     else:
         logger.warning("Knowledge base not found at '%s' — skipping auto-load.", KNOWLEDGE_BASE_PATH)
+
+    # Auto-ingest thesis PDF
+    if THESIS_PDF_PATH.exists():
+        thesis_filename = THESIS_PDF_PATH.name
+        if _is_already_ingested(thesis_filename):
+            logger.info("Thesis '%s' already indexed — skipping.", thesis_filename)
+        else:
+            from app.services.ingestion import ingest_pdf
+            doc_id, chunks = ingest_pdf(THESIS_PDF_PATH, thesis_filename)
+            logger.info(
+                "Thesis loaded: '%s' → document_id=%s, chunks=%d",
+                thesis_filename, doc_id, chunks,
+            )
 
     # Keep-alive: ping self every 10 min so free Render instance doesn't spin down
     async def _keep_alive():
