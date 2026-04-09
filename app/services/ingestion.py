@@ -1,3 +1,25 @@
+"""
+app/services/ingestion.py — Document Ingestion Pipeline (the "librarian")
+
+Handles reading documents (PDFs or Markdown), splitting them into meaningful chunks,
+embedding them as vectors, and storing them in ChromaDB.
+
+Two ingestion paths:
+  ingest_pdf()      → For PDFs: uses PyMuPDF font-size analysis to detect headings,
+                      groups text under headings, splits large sections with RecursiveCharacterTextSplitter
+  ingest_markdown() → For Markdown: splits by ATX headings (# ## ###), same adaptive chunking
+
+Key design decision — section-aware chunking:
+  Naive fixed-size chunking (every 500 chars) breaks sentences and loses context.
+  Instead, we detect document structure (headings) and keep sections whole when possible.
+  Each sub-chunk is prefixed with its section title so the retriever knows the context.
+
+Chunk parameters: chunk_size=500, chunk_overlap=50
+  - 500 chars ≈ 150 words — enough for a coherent paragraph
+  - 50 char overlap prevents losing info at chunk boundaries
+  - Any "overview" section must fit within 500 chars or it gets split (defeating its purpose)
+"""
+
 import uuid
 from pathlib import Path
 

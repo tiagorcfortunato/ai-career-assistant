@@ -1,3 +1,21 @@
+"""
+app/services/retrieval.py — RAG Query Pipeline (the "brain")
+
+This is where the core RAG logic lives. When a user asks a question:
+
+1. ENRICH: If the query is short (<5 words), prepend conversation history
+   to resolve follow-up references like "tell me more about that"
+2. RETRIEVE: Embed the question → cosine similarity search in ChromaDB → top 10 chunks
+3. GENERATE: Send system prompt + conversation history + retrieved chunks + question
+   to the Groq LLM (Llama 3.1 8B Instant)
+4. RETURN: Either as a full JSON response (query) or as streaming SSE tokens (stream_query)
+
+Key design decisions:
+- History enrichment only for short queries (prevents context pollution on specific questions)
+- System prompt allows rephrasing but anchors all factual claims to retrieved context
+- Streaming uses AsyncGenerator yielding SSE-formatted JSON lines
+"""
+
 import json
 from typing import AsyncGenerator
 

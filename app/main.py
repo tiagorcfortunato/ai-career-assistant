@@ -1,3 +1,15 @@
+"""
+app/main.py — Application Entry Point
+
+This is where the FastAPI app is created and configured. It handles:
+1. Lifespan: on startup, auto-ingests the knowledge base (if not already indexed)
+2. Keep-alive: background task pings /health every 10 min to prevent Render free tier spin-down
+3. Middleware: CORS (allows cross-origin requests), static file serving
+4. Routing: mounts the API router at /api and serves the frontend at /
+
+Think of this as the "manager" — it wires everything together but doesn't do the actual work.
+"""
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
