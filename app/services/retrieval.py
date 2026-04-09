@@ -210,41 +210,55 @@ def _get_vector_store() -> Chroma:
 
 def _build_search_query(question: str, history: list[ChatMessage]) -> str:
     """
-    Builds an optimized search query using two strategies:
-
-    1. History enrichment: If query is short (<5 words) and has history,
-       prepend recent context to resolve references like "tell me more"
-    2. Query expansion: Use the LLM to generate better search keywords.
-       E.g., "Tell me about yourself" → "Tiago background skills projects experience"
-
-    Both the original (or history-enriched) query AND the expanded query
-    are combined for maximum recall.
+    If there's conversation history AND the query is short/ambiguous,
+    enrich the search query with recent context. This helps resolve
+    references like "tell me more about the first one".
     """
-    base_query = question
-    if history and len(question.split()) < 5:
-        last_exchange = history[-2:] if len(history) >= 2 else history
-        context = " ".join(m.content for m in last_exchange)
-        base_query = f"{context} {question}"
+    if not history or len(question.split()) >= 5:
+        return question
+    last_exchange = history[-2:] if len(history) >= 2 else history
+    context = " ".join(m.content for m in last_exchange)
+    return f"{context} {question}"
 
-    # Expand query with LLM-generated search terms
+
+def _two_pass_search(question: str, search_query: str, document_id: str | None) -> list[dict]:
+    """
+    Two-pass retrieval for better recall without sacrificing precision:
+    1. Primary search with the original/history-enriched query (high precision)
+    2. Secondary search with LLM-expanded query (catches missed chunks)
+    Results are deduplicated, with primary results prioritized.
+    """
+    # Pass 1: original query (high precision)
+    primary = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
+
+    # Pass 2: expanded query (high recall)
     expanded = _expand_query(question)
-
-    # Combine both for broader retrieval
     if expanded and expanded != question:
-        return f"{base_query} {expanded}"
-    return base_query
+        secondary = _hybrid_search(expanded, document_id, k=settings.retrieval_k // 2)
+    else:
+        secondary = []
+
+    # Deduplicate: keep primary results, add new secondary results
+    seen = {doc["content"][:100] for doc in primary}
+    for doc in secondary:
+        key = doc["content"][:100]
+        if key not in seen:
+            primary.append(doc)
+            seen.add(key)
+
+    return primary[:settings.retrieval_k]
 
 
 def query(question: str, document_id: str | None, history: list[ChatMessage]) -> QueryResponse:
     """
-    Hybrid search (semantic + BM25) for relevant chunks, then asks the LLM
+    Two-pass hybrid search (semantic + BM25) for relevant chunks, then asks the LLM
     to answer taking conversation history into account.
     """
     # 1. Enrich query with history context for better retrieval
     search_query = _build_search_query(question, history)
 
-    # 2. Hybrid search (semantic + BM25 with RRF fusion)
-    results = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
+    # 2. Two-pass search: original + expanded query
+    results = _two_pass_search(question, search_query, document_id)
 
     if not results:
         return QueryResponse(
@@ -303,7 +317,7 @@ async def stream_query(
     """Streaming version of query() — yields SSE-formatted lines."""
 
     search_query = _build_search_query(question, history)
-    results = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
+    results = _two_pass_search(question, search_query, document_id)
 
     if not results:
         yield f"data: {json.dumps({'token': 'I could not find relevant information about that topic.'})}\n\n"
