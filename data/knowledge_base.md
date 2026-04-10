@@ -6,6 +6,9 @@
 
 ## Quick Reference — Common Recruiter Questions
 
+### Who is Tiago Fortunato
+Tiago Fortunato is a Product Engineer and Founder based in Berlin, Germany. He has an MSc in Software Engineering from the University of Europe for Applied Sciences (2026) and a BSc in Mechanical Engineering from UERJ in Brazil. He is the sole founder and developer of Odys, a live SaaS product. He focuses on AI-powered applications and ships products end-to-end as a single person, using AI tools (Claude Code) as a core part of his workflow. He is open to Product Engineer, AI Engineer, Solutions Engineer, or Founding Engineer roles in Berlin or remote, and is looking for EU Blue Card sponsorship.
+
 ### Tiago's Projects Summary
 Tiago has built three main projects: (1) [RAG Career Chatbot](https://github.com/tiagorcfortunato/rag-pdf-chatbot) — a production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application with streaming SSE, LangChain, ChromaDB, Groq, deployed on AWS EC2 with Docker, Nginx, and HTTPS. (2) [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) — a production-grade REST API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT authentication, admin roles, and 31 Pytest integration tests running against real PostgreSQL in GitHub Actions CI. (3) [Odys](https://odys.com.br) — a WhatsApp-first scheduling SaaS built entirely solo for Brazilian freelance professionals, with Stripe payments, self-hosted Evolution API for WhatsApp reminders, multi-tenant architecture, and Supabase pg_cron.
 
@@ -25,22 +28,29 @@ Four main limitations of RAG systems: (1) Retrieval quality — if the relevant 
 
 ## About Tiago
 
-Tiago Fortunato is a **Full-Stack Developer and Founder** based in **Berlin, Germany**. He holds an **MSc in Software Engineering** from the University of Europe for Applied Sciences (completed 2026), with a background in Mechanical Engineering (BSc, UERJ, Brazil).
+Tiago Fortunato is a **Product Engineer and Founder** based in **Berlin, Germany**. He holds an **MSc in Software Engineering** from the University of Europe for Applied Sciences (completed 2026), with a background in **Mechanical Engineering (BSc, UERJ, Brazil)**. That mix shaped how he works: he designs systems, ships products end to end, and cares about whether what he builds actually solves the problem.
 
 He is the **sole founder and developer of Odys** (odys.com.br) — a live, production WhatsApp-first scheduling SaaS for freelance professionals in Brazil, built entirely from architecture to deployment.
 
-His technical focus spans **AI application engineering** (RAG pipelines, computer vision, ML), **backend API development** (Python/FastAPI), and **full-stack SaaS product development** (Next.js/TypeScript/Supabase).
+His focus is **AI-powered applications**: RAG pipelines, LLM integrations, multimodal AI classification, and production deployment of AI systems. He uses **Claude Code as part of his development workflow** — it lets him ship at founder speed while maintaining quality. He reviews and understands every line he commits, but he doesn't pretend to write everything from scratch. This is a deliberate strength: leveraging AI effectively is what allows a single person to ship production-grade systems end to end.
+
+**What Tiago does well:**
+- Translates vague problems into shippable products
+- Designs end-to-end systems (frontend, backend, infrastructure, AI layer)
+- Moves fast without losing quality
+- Owns outcomes from idea to production
 
 **Contact:**
 - Email: tifortunato.eng@gmail.com
 - Phone: +49 172 238 9909
-- Portfolio: tiagorcfortunato.vercel.app
-- GitHub: github.com/tiagorcfortunato
-- LinkedIn: linkedin.com/in/tiagorcfortunato
+- Portfolio: [tifortunato.com](https://tifortunato.com)
+- Career chatbot: [chatbot.tifortunato.com](https://chatbot.tifortunato.com)
+- GitHub: [github.com/tiagorcfortunato](https://github.com/tiagorcfortunato)
+- LinkedIn: [linkedin.com/in/tiagorcfortunato](https://linkedin.com/in/tiagorcfortunato)
 
 **Languages:** Portuguese (native), English (fluent), German (B2.2, actively improving)
 
-**Available for:** Full-Stack or Backend Developer roles in Berlin or remote. Tiago currently holds a student visa and is looking for a role that can sponsor an EU Blue Card.
+**Available for:** Product Engineer, AI Engineer, Solutions Engineer, or Founding Engineer roles in Berlin or remote — where he can own outcomes and ship close to the customer. Tiago currently holds a student visa and is looking for a role that can sponsor an EU Blue Card.
 
 ---
 
@@ -455,6 +465,10 @@ Tiago comes from an entrepreneurial background. He studied mechanical engineerin
 
 It's less of a transition and more of a completion. As a project manager Tiago was always the person closest to the technical decisions without making them. At some point he realized he was the bottleneck — he understood the problem but needed someone else to build the solution. So he went back to study and then built Odys to prove he could do it alone. The combination is what makes him useful: he thinks like a product person and executes like an engineer.
 
+**"Why Product Engineer instead of Software Engineer?"**
+
+Tiago doesn't see himself as someone who sits and writes code from scratch all day — that's not his strength and it's not what he enjoys. What he does well is taking a vague problem, understanding what really matters, designing the system, and shipping it end-to-end with whatever tools get the job done fastest. That's Product Engineering. He's an engineer who optimizes for shipped outcomes, not for lines of code written by hand.
+
 **"Mechanical engineering degree — why software?"**
 
 Mechanical engineering gave Tiago systems thinking. He was always more interested in how things work together than in the physical components. Software is the same problem at a different layer. And in software you can ship something in weeks that would take years in physical engineering. The leverage is completely different.
@@ -487,7 +501,15 @@ For any workflow involving external systems, Tiago would introduce background jo
 
 **"How do you use AI in your engineering workflow?"**
 
-His daily setup is Claude Code and Gemini inside Cursor. He writes deliberate prompts, reviews every suggestion critically, and only ships what he actually understands. He doesn't use AI to generate code he can't explain. It lets him move at founder speed without sacrificing quality — but the architectural decisions are always his.
+Tiago is upfront about this: AI is a core part of how he ships. His daily setup is Claude Code and Gemini inside Cursor. He writes deliberate prompts, reviews every suggestion critically, and only ships what he actually understands. He doesn't use AI to generate code he can't explain or maintain — every line he commits, he understands. The architectural decisions are always his. AI is a force multiplier, not a replacement for thinking. This is what allows a single person to ship production-grade systems end-to-end at founder speed.
+
+**"Do you write all your code yourself?"**
+
+No, and Tiago is honest about that. He uses AI tools (Claude Code, Cursor) heavily as part of his workflow. But every line that gets committed, he reviews, understands, and can explain. During his MSc he had to defend and correct AI-assisted projects in front of professors — that's how he learned to use AI as a tool, not a crutch. He's not the developer who sits and codes everything from scratch, and he's not trying to be. He's a Product Engineer who ships outcomes, and AI is part of how he gets there fast.
+
+**"Are you a 'real' developer if you use AI heavily?"**
+
+Tiago thinks this question is becoming outdated. The real question is: can you ship production-grade systems that solve real problems? He can. He understands the code, the architecture, the trade-offs, and the deployment. He just doesn't pretend that typing every character himself adds value. Most modern teams want engineers who leverage AI effectively, not engineers who refuse to.
 
 ### About the Role
 
