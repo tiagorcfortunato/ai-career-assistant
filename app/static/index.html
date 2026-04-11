@@ -358,14 +358,48 @@
 
 <script>
   let conversationHistory = [];
-  const SUGGESTIONS = [
+  const SUGGESTIONS_POOL = [
+    // General
+    "Tell me about yourself",
     "What projects has Tiago built?",
     "What is his AI and ML experience?",
-    "Tell me about his MSc thesis",
     "What is his full tech stack?",
-    "Tell me about yourself",
+    "Tell me about his MSc thesis",
+    "What does founder-level ownership mean to him?",
+    "How does Tiago use AI in his workflow?",
+    // Odys — specific
+    "How does Odys handle WhatsApp reminders?",
+    "How does Odys prevent double-booking?",
+    "Why did Tiago choose Drizzle over Prisma for Odys?",
+    "How does the Odys AI assistant work?",
+    "How does Odys handle Stripe billing?",
+    "Why self-host Evolution API for WhatsApp?",
+    "What are the Odys AI guardrails?",
+    "How does the reminder cron job work?",
+    // Inspection API — specific
+    "How does the Inspection API classify damage with AI?",
+    "How does the Inspection API track AI overrides?",
+    "How does background AI processing work in the Inspection API?",
+    "What tests does the Inspection API have?",
+    "How does the Inspection API handle authentication?",
+    // RAG Chatbot — specific
+    "How does the RAG chatbot's hybrid search work?",
+    "What is Reciprocal Rank Fusion?",
+    "How does section-aware chunking work?",
+    "How is the RAG chatbot deployed on AWS?",
+    "Why pre-ingest the knowledge base at Docker build time?",
+    // Thesis
+    "What were the results of his MSc thesis?",
+    "What is YOLOv8 and how did he use it?",
   ];
   const usedSuggestions = new Set();
+
+  function pickSuggestions(n = 5) {
+    const available = SUGGESTIONS_POOL.filter(s => !usedSuggestions.has(s));
+    // Shuffle and pick n
+    const shuffled = [...available].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, n);
+  }
 
   const renderer = new marked.Renderer();
   renderer.link = function({ href, title, text }) {
@@ -470,12 +504,12 @@
       // Make list items that look like questions clickable
       makeItemsClickable(bubble);
 
-      // Append remaining suggestion chips below this answer
-      const remaining = SUGGESTIONS.filter(s => !usedSuggestions.has(s));
-      if (remaining.length > 0) {
+      // Append 5 fresh suggestion chips below this answer (random from unused pool)
+      const fresh = pickSuggestions(5);
+      if (fresh.length > 0) {
         const chipsEl = document.createElement('div');
         chipsEl.className = 'chips';
-        remaining.forEach(q => {
+        fresh.forEach(q => {
           const btn = document.createElement('button');
           btn.className = 'chip';
           btn.textContent = q;
@@ -520,7 +554,7 @@
       : '';
 
     const chipsHtml = withChips
-      ? `<div class="chips">${SUGGESTIONS.map(q => `<button class="chip" onclick="sendQuestion('${escapeHtml(q)}')">${escapeHtml(q)}</button>`).join('')}</div>`
+      ? `<div class="chips">${pickSuggestions(5).map(q => `<button class="chip" onclick="sendQuestion('${escapeHtml(q)}')">${escapeHtml(q)}</button>`).join('')}</div>`
       : '';
 
     wrap.innerHTML = `
