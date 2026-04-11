@@ -15,6 +15,7 @@
   <meta property="og:image:height" content="630" />
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/static/stories.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -239,6 +240,123 @@
     .chip:hover {
       background: var(--primary-light);
       border-color: var(--primary);
+    }
+
+    /* ── Story mode ─────────────────────────────────────────────────── */
+    .story-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .story-emoji {
+      font-size: 22px;
+    }
+    .story-title {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .story-progress {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .story-progress-bar {
+      margin-top: 4px;
+      height: 4px;
+      width: 100%;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .story-progress-fill {
+      height: 100%;
+      background: var(--primary);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .story-step-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .story-content {
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .story-content p { margin: 10px 0; }
+    .story-content ul { padding-left: 22px; margin: 10px 0; }
+    .story-content li { margin: 4px 0; }
+    .story-content strong { color: var(--text); }
+    .story-content code {
+      background: var(--bot-bubble);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 90%;
+    }
+    .story-code-block {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      font-size: 12.5px;
+      line-height: 1.55;
+      overflow-x: auto;
+      margin-top: 12px;
+      white-space: pre;
+    }
+    .story-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .story-btn {
+      padding: 9px 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+      font-weight: 600;
+      background: #fff;
+      color: var(--primary);
+    }
+    .story-btn.primary {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    .story-btn.primary:hover { background: var(--primary-dark); }
+    .story-btn:not(.primary):hover {
+      background: var(--primary-light);
+      border-color: var(--primary);
+    }
+    .story-deep-dive {
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: #fef3c7;
+      border-left: 3px solid #f59e0b;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #78350f;
+    }
+    .story-deep-dive p { margin: 8px 0; }
+    .story-deep-dive strong { color: #78350f; }
+    .story-deep-dive code {
+      background: #fde68a;
+      padding: 1px 5px;
+      border-radius: 3px;
     }
 
     /* ── Input ──────────────────────────────────────────────────────── */
@@ -480,10 +598,155 @@
 
   // ── Send ────────────────────────────────────────────────────────────────────
 
+  // ── Story mode (guided tours) ─────────────────────────────────────────
+  // Intercepts "Walk me through how X was built" questions and renders the
+  // corresponding story from stories.js as a step-by-step guided tour.
+  // Each step has Continue / Deep Dive / Ask About This / Exit buttons.
+
+  const STORY_TRIGGERS = {
+    "walk me through how odys was built": "odys",
+    "walk me through how the inspection api was built": "inspection",
+    "walk me through how this chatbot was built": "chatbot",
+  };
+
+  function detectStoryTrigger(question) {
+    const normalized = question.toLowerCase().trim().replace(/[?.!]+$/, "");
+    return STORY_TRIGGERS[normalized] || null;
+  }
+
+  function enterStoryMode(storyKey) {
+    const story = STORIES && STORIES[storyKey];
+    if (!story) return false;
+    // Remove any existing chips
+    document.querySelectorAll('.chips').forEach(el => el.remove());
+    renderStoryStep(storyKey, 0);
+    return true;
+  }
+
+  function renderStoryStep(storyKey, stepIndex) {
+    const story = STORIES[storyKey];
+    const step = story.steps[stepIndex];
+    if (!step) return;
+
+    const msgs = document.getElementById('messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'message bot';
+
+    const totalSteps = story.steps.length;
+    const progressPct = Math.round(((stepIndex + 1) / totalSteps) * 100);
+
+    // Header: emoji + story title + step counter + progress bar
+    const headerHtml = `
+      <div class="story-header">
+        <span class="story-emoji">${story.emoji || '📖'}</span>
+        <div style="flex:1; min-width:0;">
+          <div class="story-title">${escapeHtml(story.title)}</div>
+          <div class="story-progress-bar"><div class="story-progress-fill" style="width:${progressPct}%;"></div></div>
+        </div>
+        <span class="story-progress">Step ${stepIndex + 1} / ${totalSteps}</span>
+      </div>
+    `;
+
+    // Step title + markdown body + optional code block
+    const bodyHtml = `
+      <div class="story-step-title">${escapeHtml(step.title)}</div>
+      <div class="story-content">${marked.parse(step.content)}</div>
+      ${step.code ? `<pre class="story-code-block">${escapeHtml(step.code)}</pre>` : ''}
+    `;
+
+    // Action buttons
+    const isLast = stepIndex === totalSteps - 1;
+    const actionsContainer = document.createElement('div');
+    actionsContainer.className = 'story-actions';
+
+    if (step.deepDive) {
+      const deepBtn = document.createElement('button');
+      deepBtn.className = 'story-btn';
+      deepBtn.textContent = '↓ Tell me more';
+      deepBtn.onclick = () => {
+        if (deepBtn.dataset.shown === '1') return;
+        deepBtn.dataset.shown = '1';
+        deepBtn.disabled = true;
+        deepBtn.style.opacity = '0.5';
+        const dd = document.createElement('div');
+        dd.className = 'story-deep-dive';
+        dd.innerHTML = marked.parse(step.deepDive);
+        actionsContainer.parentElement.insertBefore(dd, actionsContainer);
+        scrollToBottom();
+      };
+      actionsContainer.appendChild(deepBtn);
+    }
+
+    if (step.learnMore) {
+      const askBtn = document.createElement('button');
+      askBtn.className = 'story-btn';
+      askBtn.textContent = '💬 Ask the AI about this';
+      askBtn.onclick = () => sendQuestion(step.learnMore);
+      actionsContainer.appendChild(askBtn);
+    }
+
+    if (!isLast) {
+      const continueBtn = document.createElement('button');
+      continueBtn.className = 'story-btn primary';
+      continueBtn.textContent = '→ Continue';
+      continueBtn.onclick = () => {
+        // Remove buttons from current step so only one set is active
+        actionsContainer.remove();
+        renderStoryStep(storyKey, stepIndex + 1);
+      };
+      actionsContainer.appendChild(continueBtn);
+    } else {
+      const doneBtn = document.createElement('button');
+      doneBtn.className = 'story-btn primary';
+      doneBtn.textContent = '✓ End of story';
+      doneBtn.onclick = () => exitStoryMode(storyKey);
+      actionsContainer.appendChild(doneBtn);
+    }
+
+    wrap.innerHTML = `
+      <div class="avatar">TF</div>
+      <div class="bubble">${headerHtml}${bodyHtml}</div>
+    `;
+    wrap.querySelector('.bubble').appendChild(actionsContainer);
+    msgs.appendChild(wrap);
+    scrollToBottom();
+
+    // Persist the story step so if the user refreshes mid-tour they see it
+    conversationHistory.push({
+      role: 'assistant',
+      content: `**${step.title}**\n\n${step.content}`,
+    });
+    saveConversation(conversationHistory);
+  }
+
+  function exitStoryMode(storyKey) {
+    const story = STORIES[storyKey];
+    addBotMessage(
+      `That's the full story of **${story.title}**. Want to explore more? Ask me anything, or try one of these:`,
+      [],
+      true,   // show chips
+      false,  // use random pool, not entry chips
+    );
+  }
+
   async function sendQuestion(text) {
     const input = document.getElementById('questionInput');
     const question = (text || input.value).trim();
     if (!question) return;
+
+    // Story mode: intercept "walk me through" questions
+    const storyKey = detectStoryTrigger(question);
+    if (storyKey) {
+      input.value = '';
+      autoResize(input);
+      document.querySelectorAll('.chips').forEach(el => el.remove());
+      usedSuggestions.add(question);
+      addUserMessage(question);
+      conversationHistory.push({ role: 'user', content: question });
+      enterStoryMode(storyKey);
+      return;
+    }
+
 
     input.value = '';
     autoResize(input);
