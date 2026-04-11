@@ -4,6 +4,34 @@ This document is a comprehensive knowledge base about the **Inspection Managemen
 
 ---
 
+## How the Inspection API Was Built — The Story
+
+When someone asks "walk me through how the Inspection API was built" or "how did you make the Inspection Management API", respond with this narrative in a conversational, first-person tone (as if Tiago is telling the story).
+
+**The origin.** This project was born from Tiago's MSc thesis on road damage detection with YOLOv8. The thesis was a research pipeline — train a model, evaluate metrics, write it up — but it stopped short of being something a municipality could actually use. Tiago wanted to show that the research could become a real product. So the Inspection Management API was designed as the "what would you do with that model in production" companion: a REST API where inspectors report road damage with photos, and an AI model classifies the damage type and severity automatically, with a human-readable rationale. Humans stay in control (every AI decision can be overridden), and overrides are tracked.
+
+**The stack choice.** FastAPI + PostgreSQL + SQLAlchemy + Alembic. Tiago picked FastAPI because it's async-first (important for AI calls that can take 2-3 seconds), has automatic OpenAPI docs, and Pydantic validation is built-in. PostgreSQL because it's boring and reliable. SQLAlchemy 2.0 because it's mature and supports hybrid_property for computed fields. Alembic because migrations are non-negotiable for any real API.
+
+**The AI classification service.** The first big design decision. The AI service has two paths: vision (for images) and text-only (for notes). For images, Tiago uses the Groq SDK directly (`AsyncGroq.chat.completions.create`) with Llama 4 Scout vision model. LangChain's `ChatGroq` wrapper doesn't properly forward base64 images — Tiago tried it first and spent a frustrating afternoon debugging before giving up and using the native SDK. For text-only, LangChain's `.with_structured_output()` works great — it uses function calling to force the model to return a type-safe Pydantic object with enum fields (damage_type, severity, rationale), so there's no JSON parsing or model hallucinating invalid categories.
+
+**The background task pattern.** When an inspection is created, the API returns a 201 immediately and runs the AI classification as a FastAPI `BackgroundTask`. The frontend polls `GET /inspections/{id}` every 3 seconds until `is_ai_processed = true`. This pattern matters: AI calls are slow and unreliable, so putting them in the request path would mean 5+ second waits and occasional timeouts. Background tasks keep the API responsive. The background task opens its own database session because the request session is already closed by the time it runs.
+
+**The override tracking.** Each inspection has two parallel sets of fields: the editable ones (damage_type, severity) and the AI ones (ai_damage_type, ai_severity). The original AI classification is stored immutably, and the editable fields can be changed by the user. A SQLAlchemy `hybrid_property` called `is_ai_overridden` computes on-read whether the human has changed anything. No redundant storage, always accurate, and the frontend can show a clear "overridden" badge on the inspections where the human disagreed with the AI. This is the kind of human-in-the-loop design that real-world AI systems need.
+
+**The image compression.** Groq's vision API has a size limit on base64 images. Tiago added a Pillow-based compressor that resizes to max 1024px on the longer side and re-encodes as JPEG at 75% quality before sending. This saves tokens (cost) and keeps requests within limits. He also did the same on the frontend (800px) so the upload is fast and the database doesn't store 10MB photos.
+
+**The auth layer.** JWT with `python-jose` for token creation and `bcrypt` for password hashing. Protected routes use FastAPI's `Depends(get_current_user)`. Two roles: `user` and `admin`. Regular users can only CRUD their own inspections — enforced at the query layer by always filtering on `user_id`. Admins have a separate `/admin/inspections` endpoint group that returns cross-user data, and each admin endpoint explicitly checks `current_user.role == "admin"` before returning anything. No "just trust the frontend" — authorization happens on the server, always.
+
+**The testing discipline.** Tiago wrote 31 Pytest tests covering auth, CRUD, data isolation (user A can never see user B's inspections), filtering, pagination, sorting, admin endpoints, and validation. The tests run against a **real PostgreSQL** database (not mocks) — because ORM bugs are exactly the kind of thing that mocks hide. GitHub Actions CI spins up a Postgres 15 service container with health checks, runs Alembic migrations, then runs the test suite on every push. 
+
+**The deployment.** Docker container on Render free tier, with a companion Vercel frontend (`inspection-dashboard.vercel.app`) built with vanilla HTML/CSS/JS — no React, no build tools, just a straightforward SPA that calls the API. The backend auto-deploys on push to main. The frontend polls the backend for AI status updates and shows the classification once it's ready.
+
+**The migrations.** Five Alembic migrations tracking the schema evolution: initial tables → admin role → AI classification fields → base64 image storage → AI override tracking. Each migration is version-controlled and runs automatically on deployment. This is how you evolve a production schema without breaking things.
+
+**The lesson for a recruiter.** The Inspection API demonstrates: clean layered architecture (routers → services → models), async-first backend, production AI integration (vision + text, structured output, background processing), human-in-the-loop design with override tracking, comprehensive testing with a real database in CI, and the discipline to version-control schema changes with migrations. It's the "real" companion to the academic thesis — research turned into a shippable API.
+
+---
+
 ## 1. Project Identity
 
 - **Name:** Inspection Management API

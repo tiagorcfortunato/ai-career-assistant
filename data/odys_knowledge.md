@@ -4,6 +4,32 @@ This document is a structured knowledge base about Odys designed to be ingested 
 
 ---
 
+## How Odys Was Built — The Story
+
+When someone asks "walk me through how Odys was built" or "how did you build Odys", respond with this narrative in a conversational, first-person tone (as if Tiago is telling the story).
+
+**The starting point.** Tiago moved to Berlin to do his MSc in Software Engineering after years of running a family jewelry business in Brazil. As a project manager there, he'd watched friends — psychologists, personal trainers, hairdressers — manage their entire businesses from WhatsApp manually. Confirming bookings by typing. Tracking payments in a notebook. No-shows because there was no automated reminder. He knew the pain firsthand, and he saw nobody solving it well: Calendly assumes email-first communication (Brazilians don't use email like Europeans do), and the existing Brazilian competitors were either too complex or didn't integrate with real WhatsApp. That was the gap.
+
+**The early prototype.** Tiago started building Odys in parallel with his master's thesis. The first version was a simple Next.js app with a booking page and a Supabase database. No WhatsApp, no payments, no plans — just "can a client book a time, and can the professional see it?". That MVP took two weekends.
+
+**The WhatsApp problem.** The hardest part, and the part that made Odys actually differentiated, was getting WhatsApp to work the right way. The official WhatsApp Business API sends messages from a business account — clients don't recognize the number, trust is lower, and it's 10× more expensive. Tiago wanted messages to come from the professional's real phone, the one clients already have saved. The solution was Evolution API — an open source server that wraps WhatsApp Web. The professional scans a QR code once, and from then on messages go out from their real number. Tiago self-hosted it on Railway using Docker. The trade-off: WhatsApp Web sessions can drop overnight, so he built a watchdog cron that runs at 09:00 every day to detect a disconnected session and force a reconnect before the 24h reminder cron fires.
+
+**The database decision.** Supabase (Postgres) for the database, with Drizzle ORM instead of Prisma. Drizzle is lighter, type-inferred at the query level, and lets Tiago drop to raw SQL for complex aggregations like the no-show client query, which would have been painful in Prisma. Crucial quirk: Supabase's pooled connection string uses PgBouncer in transaction mode, which breaks prepared statements. Tiago spent a few hours debugging weird "prepared statement does not exist" errors before finding the documented workaround: `prepare: false` on the postgres-js driver.
+
+**The payment system.** Odys uses Stripe for subscriptions (professionals pay Odys monthly) and PIX for client-to-professional payments (instant Brazilian payment rail). Plan changes are webhook-driven — the client can never POST its way to a paid plan, because Stripe signs the webhook event and Odys only updates the plan after verifying the signature. Tiago also hand-rolled the PIX QR code generation from the Banco Central spec — TLV encoder, CRC16 checksum, merchant name normalization — instead of pulling in a library. The spec is small, the libraries he found were bloated, and he wanted to understand what he was generating.
+
+**The AI assistant.** After Odys had core features, Tiago added a chat assistant for professionals. It answers questions like "how many sessions did I have in March?" or "which clients miss the most appointments?". The trick was making it safe: the model uses Groq's tool-calling, and each tool runs a scoped SQL query with the professional's ID enforced at the SQL layer, not trusted to the model. Revenue is computed deterministically in the tool, not by asking the model to multiply. Unknown tool names return errors instead of throwing. Four layers of guardrails so a prompt injection can't leak one professional's data to another.
+
+**The reminder cron.** Every day at 08:00, a Vercel cron hits `/api/cron/reminders`. The job: send 24h reminders (for appointments starting in 23-25h), send 1h reminders (for appointments starting in 50-70min), and send trial-expiry emails. The ±1h windows matter — with a once-a-day cron, "exactly 24h" would miss most appointments. And the `reminder_sent_24h` flag makes the job idempotent: if the cron fails one day, the next run still catches the backlog.
+
+**The deployment.** The app deploys to Vercel on every push to main. The WhatsApp API (Evolution) runs on Railway as a Docker container. Rate limiting via Upstash Redis (three isolated limiters: booking, API, onboarding — so one change doesn't affect another). Sentry for errors, PostHog for product analytics. A GitHub Actions CI runs TypeScript checks, ESLint, and builds on every push before Vercel deploys.
+
+**The honest assessment.** Odys is live in production but doesn't have meaningful user traction yet — Tiago has been focused on the engineering and product rather than distribution. The codebase is 112 TypeScript files, 20 API routes, 10 Postgres tables, 19 WhatsApp message templates as named functions, and four plan tiers. It's production-grade: rate limiting, webhook verification, watchdog crons, monitoring, idempotent jobs. But it hasn't been stress-tested at scale because the traffic isn't there. Tiago is open about this — the product is technically sound, the distribution is the next chapter.
+
+**The lesson for a recruiter.** Odys shows end-to-end ownership: product research, market fit, architecture, implementation, deployment, monitoring, and a chat AI on top — all as a solo builder. No team to lean on, no specs handed over, every decision was his.
+
+---
+
 ## What is Odys?
 
 Odys is a Software-as-a-Service (SaaS) scheduling and customer-management platform built for independent service professionals in Brazil. The official website is https://odys.com.br. Odys helps professionals such as psychologists, personal trainers, nutritionists, beauticians, dentists, coaches, therapists, and many other service providers manage their appointments, clients, payments, and communication — all integrated with WhatsApp. Odys replaces the manual process of confirming bookings, sending reminders, and tracking payments through notebooks, spreadsheets, or endless WhatsApp message threads. The name of the product is "Odys," and the domain is odys.com.br.
