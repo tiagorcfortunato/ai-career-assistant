@@ -371,6 +371,46 @@ Odys is designed to comply with the Brazilian General Data Protection Law (LGPD 
 
 ---
 
+## Key Technical Decisions — the "why" behind every choice
+
+These are the reasons Tiago picked each major technology in Odys. Recruiters and engineers often ask "why X over Y?" — these are the answers.
+
+**Why Next.js 16 App Router?** SSR for SEO on public booking pages and API routes in the same codebase — as a solo developer, Tiago did not want to own a separate backend. One deployable, one codebase.
+
+**Why Drizzle ORM over Prisma?** Three reasons. First, Drizzle is lighter — no code generation step, no separate migration runner unless you want one. Second, type inference happens at the query level, so `db.select().from(appointments)` already has the right shape without a generated client getting out of sync. Third, Drizzle's query syntax is basically SQL-in-TypeScript, which lets Tiago drop to raw SQL via ```sql`` ``` for things like the `count(*) filter (where ...)` aggregation in the AI assistant's no-show query — that would be painful in Prisma.
+
+**Why Supabase over self-hosted PostgreSQL?** Managed auth + PostgreSQL + storage from one vendor, and the pooled connection string works from serverless (Vercel).
+
+**Why `prepare: false` on postgres-js?** Required for PgBouncer transaction mode, which Supabase's pooler uses. Prepared statements are per-connection state, so they break when PgBouncer rotates server connections between clients. Turning off prepared statements is the documented workaround.
+
+**Why Evolution API (self-hosted) over WhatsApp Business API?** Messages send from the professional's real phone via WhatsApp Web — that is the actual product differentiator for Odys, because clients trust messages from the number they already know. WhatsApp Business API sends from a business account that clients do not recognize, and it is roughly 10× more expensive. Self-hosted Evolution API is what makes Odys "WhatsApp-first".
+
+**Why Groq for the AI assistant?** Latency. Groq's LPU architecture gets `llama-3.3-70b-versatile` responses back in under a second for short contexts. Tool-calling chat feels instant. On OpenAI, the same model class would be noticeably slower for this chat-style workload.
+
+**Why tool-calling with scoped SQL instead of embedding-based RAG for the AI assistant?** The assistant answers must cite real numbers (revenue, no-show counts, upcoming appointments). Structured SQL queries over structured data are the right answer for that — RAG over documents would hallucinate numbers. The AI model picks the tool, the tool runs scoped SQL, and the result goes back to the model to format the answer.
+
+**Why Upstash Redis for rate limiting?** Serverless-friendly — it uses HTTP, not a TCP connection pool, so it works cleanly from Vercel's serverless functions. Cheap. Easy to have multiple isolated limiters with different prefixes.
+
+**Why Zod for request validation?** "Parse, don't validate." The TypeScript type is derived from the schema, so runtime checks and compile-time checks can never drift apart. One source of truth for request shape.
+
+**Why Stripe webhooks as the only plan-update path?** Client-trusted plan upgrades are a security smell. Stripe signs the event, Tiago's webhook verifies the signature, and only then the database gets updated. There is no client-side code path that can escalate a plan.
+
+**Why Vercel cron over Inngest, Trigger.dev, or other workflow tools?** Odys has two daily cron jobs, no fan-out, no complex workflows. Vercel cron is simple, bundled, and free. Tiago would reach for Inngest only if he needed delayed actions or workflows.
+
+**Why Sentry and PostHog separately?** They solve different problems. Sentry handles errors — stack traces, source maps, release tracking. PostHog handles product analytics — funnels, events, feature flags. Using one tool for both would be worse at each.
+
+**Why postgres-js driver directly over `@supabase/supabase-js`?** Tiago wanted direct Drizzle queries with full type inference, not the PostgREST-based REST layer that `@supabase/supabase-js` provides for data access. PostgREST is great for quick prototyping; Drizzle is better for production query patterns.
+
+**Why Resend over SendGrid or Postmark?** Developer experience — TypeScript SDK, good React Email compatibility, clean domain verification flow, and the free tier fits a solo launch.
+
+**Why shadcn/ui + Tailwind v4 instead of a component library?** shadcn/ui gives you copy-paste components that Tiago owns in his own codebase, not a dependency he is stuck with. If he needs to change a Button, he edits the file directly — no overrides, no wrappers, no fighting a third-party API.
+
+**Why fire-and-forget side effects for WhatsApp and email after booking?** The user clicked "confirm booking" — they need a fast 200 response. A WhatsApp send taking 2 seconds should not block that response. The in-app notification (which is the SLA-sensitive surface) IS awaited, but WhatsApp and email are fire-and-forget with `.catch` handlers.
+
+**Why 19 WhatsApp templates as named functions instead of inline strings?** Single source of truth. Every message Odys sends is a function in `lib/whatsapp/templates.ts`. No typos, searchable, testable, and any copy change is one file and one commit.
+
+---
+
 ## Technical stack
 
 Odys is built on the following technology stack:
