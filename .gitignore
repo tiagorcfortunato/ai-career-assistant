@@ -6,6 +6,7 @@
 
 # Vector DB
 chroma_db/
+chroma_db_local/
 
 # Python
 __pycache__/
