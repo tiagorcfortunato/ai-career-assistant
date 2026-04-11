@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     llm_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     chroma_path: str = "./chroma_db"
-    chunk_size: int = 500
-    chunk_overlap: int = 50
+    chunk_size: int = 1000
+    chunk_overlap: int = 100
     retrieval_k: int = 10
 
     model_config = SettingsConfigDict(env_file=".env")

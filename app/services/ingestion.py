@@ -56,9 +56,11 @@ def ingest_markdown(file_path: Path, filename: str) -> tuple[str, int]:
     chunks = []
     metadatas = []
 
-    for section_title, section_text in sections:
-        if len(section_text) <= settings.chunk_size:
-            chunks.append(section_text)
+    for section_title, section_body in sections:
+        # Always prefix with the section title so retrieval keeps topical context
+        full_section = f"{section_title}\n{section_body}"
+        if len(full_section) <= settings.chunk_size:
+            chunks.append(full_section)
             metadatas.append({
                 "document_id": document_id,
                 "filename": filename,
@@ -66,7 +68,7 @@ def ingest_markdown(file_path: Path, filename: str) -> tuple[str, int]:
                 "section": section_title,
             })
         else:
-            sub_chunks = splitter.split_text(section_text)
+            sub_chunks = splitter.split_text(section_body)
             for sub_chunk in sub_chunks:
                 chunks.append(f"{section_title}\n{sub_chunk}")
                 metadatas.append({
@@ -85,26 +87,31 @@ def ingest_markdown(file_path: Path, filename: str) -> tuple[str, int]:
 def _extract_markdown_sections(text: str) -> list[tuple[str, str]]:
     """
     Splits markdown text into sections by ATX headings (# ## ###).
-    Returns list of (section_title, section_text).
+    Returns list of (section_title, section_body) — body is the content
+    WITHOUT the title prepended (title is added later by ingest_markdown).
+    Skips empty sections (headings with no content).
     """
     sections = []
     current_title = "Introduction"
     current_lines: list[str] = []
 
+    def _save_if_content():
+        body = "\n".join(current_lines).strip()
+        if body:  # skip empty sections
+            sections.append((current_title, body))
+
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
-            if current_lines:
-                sections.append((current_title, current_title + "\n" + "\n".join(current_lines)))
+            _save_if_content()
             current_title = stripped.lstrip("#").strip()
             current_lines = []
         else:
             current_lines.append(line)
 
-    if current_lines:
-        sections.append((current_title, current_title + "\n" + "\n".join(current_lines)))
+    _save_if_content()
 
-    return sections if sections else [("Document", text)]
+    return sections if sections else [("Document", text.strip())]
 
 
 def ingest_pdf(file_path: Path, filename: str) -> tuple[str, int]:
