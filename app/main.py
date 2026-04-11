@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 KNOWLEDGE_BASE_PATH = Path("data/knowledge_base.md")
 ODYS_KNOWLEDGE_PATH = Path("data/odys_knowledge.md")
+RAG_KNOWLEDGE_PATH = Path("data/rag_chatbot_knowledge.md")
+INSPECTION_KNOWLEDGE_PATH = Path("data/inspection_api_knowledge.md")
 # Thesis content is included in knowledge_base.md to avoid OOM on t3.micro
 
 
@@ -65,6 +67,32 @@ async def lifespan(app: FastAPI):
             logger.info(
                 "Odys knowledge loaded: '%s' → document_id=%s, chunks=%d",
                 odys_filename, doc_id, chunks,
+            )
+
+    # Auto-ingest RAG chatbot deep-dive knowledge base
+    if RAG_KNOWLEDGE_PATH.exists():
+        rag_filename = RAG_KNOWLEDGE_PATH.name
+        if _is_already_ingested(rag_filename):
+            logger.info("RAG knowledge '%s' already indexed — skipping.", rag_filename)
+        else:
+            from app.services.ingestion import ingest_markdown
+            doc_id, chunks = ingest_markdown(RAG_KNOWLEDGE_PATH, rag_filename)
+            logger.info(
+                "RAG knowledge loaded: '%s' → document_id=%s, chunks=%d",
+                rag_filename, doc_id, chunks,
+            )
+
+    # Auto-ingest Inspection API deep-dive knowledge base
+    if INSPECTION_KNOWLEDGE_PATH.exists():
+        insp_filename = INSPECTION_KNOWLEDGE_PATH.name
+        if _is_already_ingested(insp_filename):
+            logger.info("Inspection API knowledge '%s' already indexed — skipping.", insp_filename)
+        else:
+            from app.services.ingestion import ingest_markdown
+            doc_id, chunks = ingest_markdown(INSPECTION_KNOWLEDGE_PATH, insp_filename)
+            logger.info(
+                "Inspection API knowledge loaded: '%s' → document_id=%s, chunks=%d",
+                insp_filename, doc_id, chunks,
             )
 
     # Keep-alive: ping self every 10 min so free Render instance doesn't spin down
