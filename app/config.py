@@ -20,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     groq_api_key: str
-    llm_model: str = "llama-3.1-8b-instant"
+    llm_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     chroma_path: str = "./chroma_db"
     chunk_size: int = 500
