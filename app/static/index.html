@@ -357,7 +357,34 @@
 </div>
 
 <script>
-  let conversationHistory = [];
+  // ── Persistence ────────────────────────────────────────────────────────────
+  const STORAGE_KEY = 'tiago_chatbot_history_v1';
+  const MAX_HISTORY_LENGTH = 20;  // keep last 10 exchanges
+
+  function loadConversation() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) { return []; }
+  }
+
+  function saveConversation(history) {
+    try {
+      // Trim to MAX_HISTORY_LENGTH to avoid unbounded growth
+      const trimmed = history.slice(-MAX_HISTORY_LENGTH);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    } catch (_) {}
+  }
+
+  function clearConversation() {
+    localStorage.removeItem(STORAGE_KEY);
+    conversationHistory = [];
+    document.getElementById('messages').innerHTML = '';
+  }
+
+  let conversationHistory = loadConversation();
   const SUGGESTIONS_POOL = [
     // General
     "Tell me about yourself",
@@ -411,11 +438,25 @@
   // ── Init ────────────────────────────────────────────────────────────────────
 
   window.addEventListener('DOMContentLoaded', () => {
-    addBotMessage(
-      "Hi! I'm Tiago's career assistant.\n\nAsk me anything about his experience, projects, or technical skills — I'm here to help you get to know him better.",
-      [],
-      true  // show chips
-    );
+    if (conversationHistory.length > 0) {
+      // Restore previous conversation
+      conversationHistory.forEach(msg => {
+        if (msg.role === 'user') addUserMessage(msg.content);
+        else addBotMessage(msg.content, [], false);
+      });
+      // Add a small hint that it's restored
+      addBotMessage(
+        "_(Restored from your previous session. Ask another question or use the suggestions below.)_",
+        [],
+        true
+      );
+    } else {
+      addBotMessage(
+        "Hi! I'm Tiago's career assistant.\n\nAsk me anything about his experience, projects, or technical skills — I'm here to help you get to know him better.",
+        [],
+        true  // show chips
+      );
+    }
     document.getElementById('questionInput').focus();
   });
 
@@ -500,6 +541,7 @@
 
       conversationHistory.push({ role: 'user', content: question });
       conversationHistory.push({ role: 'assistant', content: fullText });
+      saveConversation(conversationHistory);
 
       // Make list items that look like questions clickable
       makeItemsClickable(bubble);
@@ -522,7 +564,18 @@
     } catch (err) {
       typingEl.remove();
       if (!bubble) ({ bubble, sourcesEl } = addBotPlaceholder());
-      bubble.textContent = `Error: ${err.message}`;
+      let friendly;
+      const msg = (err && err.message) ? err.message : String(err);
+      if (msg.includes('429')) {
+        friendly = "I'm getting a lot of traffic right now and hit the model's rate limit. Please try again in a minute!";
+      } else if (msg.includes('Failed to fetch') || msg.includes('network')) {
+        friendly = "I couldn't reach the server. Check your connection and try again.";
+      } else if (msg.includes('500') || msg.includes('502') || msg.includes('503')) {
+        friendly = "The server is having a hiccup. Please try again in a moment.";
+      } else {
+        friendly = `Something went wrong: ${msg}. Please try again.`;
+      }
+      bubble.textContent = friendly;
     } finally {
       input.disabled = false;
       document.getElementById('sendBtn').disabled = false;
@@ -633,6 +686,7 @@
   function clearChat() {
     conversationHistory = [];
     usedSuggestions.clear();
+    localStorage.removeItem(STORAGE_KEY);
     document.getElementById('messages').innerHTML = '';
     addBotMessage(
       "Hi! I'm Tiago's career assistant.\n\nAsk me anything about his experience, projects, or technical skills — I'm here to help you get to know him better.",

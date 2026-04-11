@@ -20,9 +20,12 @@ Key design decisions:
 """
 
 import json
+import logging
 import re
+import time
 from typing import AsyncGenerator
 
+from groq import RateLimitError
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -32,6 +35,20 @@ from rank_bm25 import BM25Okapi
 from app.config import settings
 from app.models.schemas import ChatMessage, QueryResponse, Source
 from app.services.embeddings import FastEmbeddings
+
+logger = logging.getLogger(__name__)
+
+# Fallback model to use if the primary model is rate-limited
+FALLBACK_MODEL = "llama-3.1-8b-instant"
+
+
+def _get_llm(model: str | None = None) -> ChatGroq:
+    """Return a ChatGroq instance. If model is None, uses the configured model."""
+    return ChatGroq(
+        model=model or settings.llm_model,
+        api_key=settings.groq_api_key,
+        temperature=0,
+    )
 
 
 SYSTEM_PROMPT = """You are the Professional Talent Assistant for Tiago Fortunato, a Software Engineer specialized in AI and Backend based in Berlin. Your goal is to help recruiters, hiring managers, and technical interviewers understand Tiago's technical depth and professional journey.
@@ -114,6 +131,7 @@ def _hybrid_search(
     query: str,
     document_id: str | None,
     k: int = 10,
+    allowed_files: list[str] | None = None,
 ) -> list[dict]:
     """
     Combines semantic search (ChromaDB) and keyword search (BM25) using
@@ -123,9 +141,21 @@ def _hybrid_search(
 
     RRF formula: score = sum(1 / (rank + 60)) across all result lists.
     The constant 60 is standard (from the original RRF paper).
+
+    If `allowed_files` is provided, results are filtered to only those files.
     """
     vector_store = _get_vector_store()
-    search_filter = {"document_id": document_id} if document_id else None
+
+    # Build filter: either document_id, file filter, or both
+    if document_id:
+        search_filter = {"document_id": document_id}
+    elif allowed_files:
+        if len(allowed_files) == 1:
+            search_filter = {"filename": allowed_files[0]}
+        else:
+            search_filter = {"filename": {"$in": allowed_files}}
+    else:
+        search_filter = None
 
     # 1. Semantic search — retrieve more than needed for fusion
     semantic_results = vector_store.similarity_search(
@@ -140,6 +170,11 @@ def _hybrid_search(
         bm25_results = [
             r for r in bm25_results
             if r["metadata"].get("document_id") == document_id
+        ]
+    if allowed_files:
+        bm25_results = [
+            r for r in bm25_results
+            if r["metadata"].get("filename") in allowed_files
         ]
 
     # 3. Reciprocal Rank Fusion
@@ -181,6 +216,48 @@ def _get_vector_store() -> Chroma:
     )
 
 
+# ─── Query routing ──────────────────────────────────────────────────────────
+
+# Map project keywords to knowledge base filenames. Retrieval can be filtered
+# to only return chunks from matching files when the query clearly targets one.
+PROJECT_KEYWORDS = {
+    "odys_knowledge.md": [
+        "odys", "whatsapp", "drizzle", "supabase", "stripe", "pix",
+        "evolution api", "scheduling saas", "booking", "brazilian",
+        "pgbouncer",
+    ],
+    "inspection_api_knowledge.md": [
+        "inspection", "road damage", "pothole", "yolo", "vision model",
+        "alembic", "jwt auth", "fastapi auth", "damage classification",
+        "groq vision", "inspection management", "override",
+    ],
+    "rag_chatbot_knowledge.md": [
+        "rag chatbot", "career assistant", "hybrid search", "bm25",
+        "reciprocal rank fusion", "rrf", "streaming sse", "section-aware chunking",
+        "chromadb", "fastembed", "this chatbot", "career bot",
+    ],
+}
+
+
+def _route_query(question: str) -> list[str] | None:
+    """
+    Simple keyword-based query routing. If the question clearly targets a
+    specific project, return [filename] to filter retrieval. If it's general
+    or ambiguous, return None (search everything).
+    """
+    lower = question.lower()
+    matched_files = [
+        filename
+        for filename, keywords in PROJECT_KEYWORDS.items()
+        if any(kw in lower for kw in keywords)
+    ]
+    # If exactly one project is matched, scope to it. Multiple matches = general.
+    if len(matched_files) == 1:
+        # Always include the general knowledge_base.md for context
+        return [matched_files[0], "knowledge_base.md"]
+    return None
+
+
 def _format_context(results: list[dict]) -> str:
     """
     Format retrieved chunks with clear project labels so the LLM knows
@@ -213,41 +290,56 @@ def _build_search_query(question: str, history: list[ChatMessage]) -> str:
     return f"{context} {question}"
 
 
+def _invoke_with_fallback(chain, params: dict):
+    """Invoke the LLM chain with the primary model, fall back to 8b on rate limit."""
+    try:
+        return chain.invoke(params)
+    except RateLimitError as e:
+        logger.warning("Primary model rate-limited, falling back to %s: %s", FALLBACK_MODEL, e)
+        # Rebuild chain with fallback model
+        prompt = chain.first
+        fallback_chain = prompt | _get_llm(FALLBACK_MODEL)
+        return fallback_chain.invoke(params)
+
+
 def query(question: str, document_id: str | None, history: list[ChatMessage]) -> QueryResponse:
     """
     Hybrid search (semantic + BM25) for relevant chunks, then asks the LLM
     to answer taking conversation history into account.
     """
+    start = time.time()
+
     # 1. Enrich query with history context for better retrieval
     search_query = _build_search_query(question, history)
 
-    # 2. Hybrid search: semantic + BM25 with RRF fusion
-    results = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
+    # 2. Query routing: scope to specific project if the question clearly targets one
+    allowed_files = _route_query(question)
+    if allowed_files:
+        logger.info("Query routed to files: %s", allowed_files)
+
+    # 3. Hybrid search: semantic + BM25 with RRF fusion
+    results = _hybrid_search(
+        search_query, document_id, k=settings.retrieval_k, allowed_files=allowed_files
+    )
 
     if not results:
         return QueryResponse(
-            answer="I couldn't find any relevant information in the uploaded documents.",
+            answer="I couldn't find any relevant information about that topic. Try asking about Tiago's projects (Odys, Inspection API, RAG Chatbot), his experience, or his tech stack.",
             sources=[],
         )
 
-    # 3. Build context string from retrieved chunks with project labels
+    # 4. Build context string from retrieved chunks with project labels
     context = _format_context(results)
 
-    # 4. Build prompt with history support
+    # 5. Build prompt with history support
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}"),
     ])
+    chain = prompt | _get_llm()
 
-    llm = ChatGroq(
-        model=settings.llm_model,
-        api_key=settings.groq_api_key,
-        temperature=0,
-    )
-    chain = prompt | llm
-
-    # 5. Convert history to LangChain message objects
+    # 6. Convert history to LangChain message objects
     lc_history = []
     for msg in history:
         if msg.role == "user":
@@ -255,13 +347,13 @@ def query(question: str, document_id: str | None, history: list[ChatMessage]) ->
         else:
             lc_history.append(AIMessage(content=msg.content))
 
-    response = chain.invoke({
+    response = _invoke_with_fallback(chain, {
         "context": context,
         "history": lc_history,
         "question": question,
     })
 
-    # 6. Build sources
+    # 7. Build sources
     sources = [
         Source(
             content=doc["content"][:200],
@@ -272,6 +364,13 @@ def query(question: str, document_id: str | None, history: list[ChatMessage]) ->
         for doc in results
     ]
 
+    # 8. Log for observability
+    duration = time.time() - start
+    logger.info(
+        "Query completed in %.2fs | question=%r | chunks=%d | routed=%s",
+        duration, question[:80], len(results), bool(allowed_files),
+    )
+
     return QueryResponse(answer=response.content, sources=sources)
 
 
@@ -279,12 +378,19 @@ async def stream_query(
     question: str, document_id: str | None, history: list[ChatMessage]
 ) -> AsyncGenerator[str, None]:
     """Streaming version of query() — yields SSE-formatted lines."""
+    start = time.time()
 
     search_query = _build_search_query(question, history)
-    results = _hybrid_search(search_query, document_id, k=settings.retrieval_k)
+    allowed_files = _route_query(question)
+    if allowed_files:
+        logger.info("Stream query routed to files: %s", allowed_files)
+
+    results = _hybrid_search(
+        search_query, document_id, k=settings.retrieval_k, allowed_files=allowed_files
+    )
 
     if not results:
-        yield f"data: {json.dumps({'token': 'I could not find relevant information about that topic.'})}\n\n"
+        yield f"data: {json.dumps({'token': 'I could not find relevant information about that topic. Try asking about Tiago projects, experience, or tech stack.'})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
@@ -296,9 +402,6 @@ async def stream_query(
         ("human", "{question}"),
     ])
 
-    llm = ChatGroq(model=settings.llm_model, api_key=settings.groq_api_key, temperature=0)
-    chain = prompt | llm
-
     lc_history = []
     for msg in history:
         if msg.role == "user":
@@ -307,17 +410,38 @@ async def stream_query(
             lc_history.append(AIMessage(content=msg.content))
 
     sources = [
-        {"section": doc["metadata"].get("section", ""), "page": doc["metadata"].get("page", 0)}
+        {
+            "content": doc["content"][:200],
+            "section": doc["metadata"].get("section", ""),
+            "page": doc["metadata"].get("page", 0),
+            "filename": doc["metadata"].get("filename", ""),
+        }
         for doc in results
     ]
     yield f"data: {json.dumps({'sources': sources})}\n\n"
 
-    async for chunk in chain.astream({
-        "context": context,
-        "history": lc_history,
-        "question": question,
-    }):
-        if chunk.content:
-            yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+    # Try primary model, fall back to 8b on rate limit
+    params = {"context": context, "history": lc_history, "question": question}
+    try:
+        chain = prompt | _get_llm()
+        async for chunk in chain.astream(params):
+            if chunk.content:
+                yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+    except RateLimitError as e:
+        logger.warning("Stream rate-limited on primary model, falling back: %s", e)
+        # Signal model switch to the user
+        yield f"data: {json.dumps({'token': '_(switched to faster fallback model due to rate limit)_\\n\\n'})}\n\n"
+        chain = prompt | _get_llm(FALLBACK_MODEL)
+        async for chunk in chain.astream(params):
+            if chunk.content:
+                yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+    except Exception as e:
+        logger.error("Stream query failed: %s", e)
+        yield f"data: {json.dumps({'token': f'Error: {str(e)[:200]}'})}\n\n"
 
+    duration = time.time() - start
+    logger.info(
+        "Stream query completed in %.2fs | question=%r | chunks=%d | routed=%s",
+        duration, question[:80], len(results), bool(allowed_files),
+    )
     yield "data: [DONE]\n\n"
