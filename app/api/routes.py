@@ -55,7 +55,7 @@ async def query_documents(request: QueryRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     try:
-        return retrieval.query(
+        return await retrieval.query(
             question=request.question,
             document_id=request.document_id,
             history=request.history,

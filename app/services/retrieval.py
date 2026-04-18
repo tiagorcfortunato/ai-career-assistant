@@ -1,15 +1,22 @@
 """
 app/services/retrieval.py — RAG Query Pipeline (the "brain")
 
-This is where the core RAG logic lives. When a user asks a question:
+The public API is `query()` and `stream_query()`. Both delegate to a LangGraph
+StateGraph defined in app/services/graph.py. Orchestration lives in the graph;
+the logic of each step (hybrid search, query routing, context formatting,
+follow-up generation, rate-limit fallback) still lives in this file as
+module-level helpers so the graph's nodes stay thin.
+
+Pipeline (implemented as graph edges in graph.py):
 
 1. ENRICH: If the query is short (<5 words), prepend conversation history
    to resolve follow-up references like "tell me more about that"
-2. RETRIEVE (Hybrid): Run both semantic search (ChromaDB) AND keyword search (BM25),
-   then fuse results using Reciprocal Rank Fusion (RRF) for best-of-both-worlds retrieval
-3. GENERATE: Send system prompt + conversation history + retrieved chunks + question
-   to the Groq LLM (Llama 3.1 8B Instant)
-4. RETURN: Either as a full JSON response (query) or as streaming SSE tokens (stream_query)
+2. ROUTE: Keyword-match the question to a specific project file when possible
+3. RETRIEVE (Hybrid): Semantic (Chroma) + keyword (BM25), fused via RRF
+4. FORMAT: Prefix chunks with [SOURCE: <project>] labels
+5. GENERATE: Stream tokens from Groq (Llama 3.3 70B → 8B fallback on 429)
+6. FOLLOW-UPS: Second LLM call (8B) to suggest 3 next questions
+7. Short-circuit: if retrieval is empty, jump to a friendly "no results" answer
 
 Key design decisions:
 - Hybrid search combines semantic understanding with exact keyword matching
@@ -17,6 +24,7 @@ Key design decisions:
 - History enrichment only for short queries (prevents context pollution on specific questions)
 - Simple single-pass retrieval (no query expansion) to minimize latency and noise
 - System prompt allows rephrasing but anchors all factual claims to retrieved context
+- Token streaming is driven by astream_events on the graph — no separate streaming path
 """
 
 import json
@@ -28,8 +36,7 @@ from typing import AsyncGenerator
 from groq import RateLimitError
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
 from rank_bm25 import BM25Okapi
 
 from app.config import settings
@@ -361,161 +368,131 @@ def _invoke_with_fallback(chain, params: dict, prompt):
         raise
 
 
-def query(question: str, document_id: str | None, history: list[ChatMessage]) -> QueryResponse:
+async def query(
+    question: str, document_id: str | None, history: list[ChatMessage]
+) -> QueryResponse:
     """
-    Hybrid search (semantic + BM25) for relevant chunks, then asks the LLM
-    to answer taking conversation history into account.
+    Delegates to the LangGraph StateGraph. The graph runs:
+        enrich_query → route_query → retrieve →
+            format_context → generate_answer → generate_followups → END
+        (or, on empty retrieval: retrieve → fallback_response → END)
     """
+    from app.services.graph import graph
+
     start = time.time()
 
-    # 1. Enrich query with history context for better retrieval
-    search_query = _build_search_query(question, history)
-
-    # 2. Query routing: scope to specific project if the question clearly targets one
-    allowed_files = _route_query(question)
-    if allowed_files:
-        logger.info("Query routed to files: %s", allowed_files)
-
-    # 3. Hybrid search: semantic + BM25 with RRF fusion
-    results = _hybrid_search(
-        search_query, document_id, k=settings.retrieval_k, allowed_files=allowed_files
-    )
-
-    if not results:
-        return QueryResponse(
-            answer="I couldn't find any relevant information about that topic. Try asking about Tiago's projects (Odys, Inspection API, RAG Chatbot), his experience, or his tech stack.",
-            sources=[],
-        )
-
-    # 4. Build context string from retrieved chunks with project labels
-    context = _format_context(results)
-
-    # 5. Build prompt with history support
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="history"),
-        ("human", "{question}"),
-    ])
-    chain = prompt | _get_llm()
-
-    # 6. Convert history to LangChain message objects
-    lc_history = []
-    for msg in history:
-        if msg.role == "user":
-            lc_history.append(HumanMessage(content=msg.content))
-        else:
-            lc_history.append(AIMessage(content=msg.content))
-
-    response = _invoke_with_fallback(chain, {
-        "context": context,
-        "history": lc_history,
+    initial_state = {
         "question": question,
-    }, prompt)
+        "document_id": document_id,
+        "history": history or [],
+    }
 
-    # 7. Build sources
-    sources = [
-        Source(
-            content=doc["content"][:200],
-            page=doc["metadata"].get("page", 0),
-            section=doc["metadata"].get("section", ""),
-            document_id=doc["metadata"].get("document_id", ""),
-        )
-        for doc in results
-    ]
+    final_state = await graph.ainvoke(initial_state)
 
-    # 8. Generate contextual follow-up questions
-    follow_ups = _generate_followups(question, response.content)
-
-    # 9. Log for observability
     duration = time.time() - start
     logger.info(
         "Query completed in %.2fs | question=%r | chunks=%d | routed=%s | followups=%d",
-        duration, question[:80], len(results), bool(allowed_files), len(follow_ups),
+        duration,
+        question[:80],
+        len(final_state.get("retrieved_chunks", [])),
+        bool(final_state.get("target_files")),
+        len(final_state.get("follow_ups", [])),
     )
 
-    return QueryResponse(answer=response.content, sources=sources, follow_ups=follow_ups)
+    return QueryResponse(
+        answer=final_state["answer"],
+        sources=final_state.get("sources", []),
+        follow_ups=final_state.get("follow_ups", []),
+    )
 
 
 async def stream_query(
     question: str, document_id: str | None, history: list[ChatMessage]
 ) -> AsyncGenerator[str, None]:
-    """Streaming version of query() — yields SSE-formatted lines."""
+    """
+    Streaming version of query() — drives the same graph via astream_events
+    and re-emits the events we care about as SSE:
+
+      - retrieve node completes with chunks       → {"sources": [...]}
+      - chat model stream from generate_answer    → {"token": "..."}
+      - fallback_response completes               → {"token": "<friendly msg>"}
+      - graph completes                           → {"follow_ups": [...]}
+      - always                                    → [DONE]
+    """
+    from app.services.graph import graph
+
     start = time.time()
 
-    search_query = _build_search_query(question, history)
-    allowed_files = _route_query(question)
-    if allowed_files:
-        logger.info("Stream query routed to files: %s", allowed_files)
+    initial_state = {
+        "question": question,
+        "document_id": document_id,
+        "history": history or [],
+    }
 
-    results = _hybrid_search(
-        search_query, document_id, k=settings.retrieval_k, allowed_files=allowed_files
-    )
+    final_state: dict = {}
+    chunks_count = 0
+    routed = False
 
-    if not results:
-        yield f"data: {json.dumps({'token': 'I could not find relevant information about that topic. Try asking about Tiago projects, experience, or tech stack.'})}\n\n"
-        yield "data: [DONE]\n\n"
-        return
-
-    context = _format_context(results)
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="history"),
-        ("human", "{question}"),
-    ])
-
-    lc_history = []
-    for msg in history:
-        if msg.role == "user":
-            lc_history.append(HumanMessage(content=msg.content))
-        else:
-            lc_history.append(AIMessage(content=msg.content))
-
-    sources = [
-        {
-            "content": doc["content"][:200],
-            "section": doc["metadata"].get("section", ""),
-            "page": doc["metadata"].get("page", 0),
-            "filename": doc["metadata"].get("filename", ""),
-        }
-        for doc in results
-    ]
-    yield f"data: {json.dumps({'sources': sources})}\n\n"
-
-    # Try primary model, fall back to 8b on rate limit. Collect full answer for follow-up gen.
-    params = {"context": context, "history": lc_history, "question": question}
-    full_answer = ""
     try:
-        chain = prompt | _get_llm()
-        async for chunk in chain.astream(params):
-            if chunk.content:
-                full_answer += chunk.content
-                yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+        async for event in graph.astream_events(initial_state, version="v2"):
+            kind = event["event"]
+            name = event.get("name", "")
+            data = event.get("data", {}) or {}
+
+            # Token stream — only from the generate_answer node, not follow-ups
+            if kind == "on_chat_model_stream":
+                metadata = event.get("metadata", {}) or {}
+                if metadata.get("langgraph_node") == "generate_answer":
+                    chunk = data.get("chunk")
+                    content = getattr(chunk, "content", "") if chunk is not None else ""
+                    if content:
+                        yield f"data: {json.dumps({'token': content})}\n\n"
+                continue
+
+            # Node completion events
+            if kind == "on_chain_end":
+                output = data.get("output") or {}
+
+                if name == "retrieve" and isinstance(output, dict):
+                    retrieved = output.get("retrieved_chunks", []) or []
+                    chunks_count = len(retrieved)
+                    if retrieved:
+                        sources_payload = [
+                            {
+                                "content": doc["content"][:200],
+                                "section": doc["metadata"].get("section", ""),
+                                "page": doc["metadata"].get("page", 0),
+                                "filename": doc["metadata"].get("filename", ""),
+                            }
+                            for doc in retrieved
+                        ]
+                        yield f"data: {json.dumps({'sources': sources_payload})}\n\n"
+
+                elif name == "route_query" and isinstance(output, dict):
+                    routed = bool(output.get("target_files"))
+
+                elif name == "fallback_response" and isinstance(output, dict):
+                    fallback_answer = output.get("answer", "")
+                    if fallback_answer:
+                        yield f"data: {json.dumps({'token': fallback_answer})}\n\n"
+
+                elif name == "LangGraph" and isinstance(output, dict):
+                    final_state = output
+
     except Exception as e:
+        logger.error("Stream query failed: %s", e)
         if _is_rate_limit_error(e):
-            logger.warning("Stream rate-limited on primary model, falling back: %s", str(e)[:200])
-            try:
-                chain = prompt | _get_llm(FALLBACK_MODEL)
-                async for chunk in chain.astream(params):
-                    if chunk.content:
-                        full_answer += chunk.content
-                        yield f"data: {json.dumps({'token': chunk.content})}\n\n"
-            except Exception as e2:
-                logger.error("Fallback model also failed: %s", e2)
-                yield f"data: {json.dumps({'token': 'Both models are rate-limited. Please try again in a few minutes.'})}\n\n"
+            yield f"data: {json.dumps({'token': 'Both models are rate-limited. Please try again in a few minutes.'})}\n\n"
         else:
-            logger.error("Stream query failed: %s", e)
             yield f"data: {json.dumps({'token': f'Error: {str(e)[:200]}'})}\n\n"
 
-    # After streaming, generate contextual follow-ups and send them as a final event
-    if full_answer:
-        follow_ups = _generate_followups(question, full_answer)
-        if follow_ups:
-            yield f"data: {json.dumps({'follow_ups': follow_ups})}\n\n"
+    follow_ups = final_state.get("follow_ups", []) if isinstance(final_state, dict) else []
+    if follow_ups:
+        yield f"data: {json.dumps({'follow_ups': follow_ups})}\n\n"
 
     duration = time.time() - start
     logger.info(
         "Stream query completed in %.2fs | question=%r | chunks=%d | routed=%s",
-        duration, question[:80], len(results), bool(allowed_files),
+        duration, question[:80], chunks_count, routed,
     )
     yield "data: [DONE]\n\n"
