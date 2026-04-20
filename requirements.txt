@@ -3,25 +3,39 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.0
 python-multipart==0.0.9
 
-# LangChain
-langchain==0.3.0
-langchain-groq==0.2.0
-langchain-chroma==0.1.4
-langchain-community==0.3.0
-langgraph==1.1.6
+# LangChain 1.x. Bumped from 0.3 because langgraph-prebuilt 1.0.x (pulled in
+# transitively by langgraph 1.1.x) requires langchain-core>=1.0.0, which is
+# incompatible with langchain/langchain-chroma/langchain-groq 0.3 (they all
+# cap langchain-core<0.4). langchain-core is pinned explicitly so the
+# resolver can't drift back across majors.
+langchain==1.2.15
+langchain-core==1.3.0
+langchain-groq==1.1.2
+langchain-chroma==1.1.0
+langchain-community==0.4.1
+langchain-text-splitters==1.1.2
+langgraph==1.1.8
+
+# chromadb does not pin its opentelemetry-* versions, so pip occasionally
+# picks a gRPC exporter from the 1.11 line while api/sdk resolve to 1.41+,
+# which then fails at import with a protobuf descriptor error. Pinning the
+# exporter forces the whole otel set to line up.
+opentelemetry-exporter-otlp-proto-grpc==1.41.0
 
 # Embeddings (local, lightweight via onnxruntime — avoids PyTorch/CUDA)
 fastembed==0.3.1
 
-# Vector DB
-chromadb==0.5.0
+# Vector DB. 0.5 → 1.5 is forced by langchain-chroma 1.x, which requires
+# chromadb>=1.0.20. Persisted chroma_db/ from 0.5 reads fine under 1.5 —
+# verified locally against the production knowledge base (393 chunks).
+chromadb==1.5.8
 
 # PDF parsing
 pymupdf==1.24.0
 
-# Config
-pydantic-settings==2.5.0
-python-dotenv==1.0.0
+# Config. pydantic-settings bumped because langchain-community 0.4 requires >=2.10.
+pydantic-settings==2.13.1
+python-dotenv==1.2.2
 
 # Hybrid search (BM25 keyword matching)
 rank_bm25==0.2.2
