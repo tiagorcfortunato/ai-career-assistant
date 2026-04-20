@@ -13,9 +13,12 @@ Pipeline shape:
       ↓
     route_query         ── keyword-scopes retrieval to specific project files
       ↓
-    retrieve            ── hybrid (semantic + BM25 + RRF) search
+    retrieve            ── hybrid (semantic + BM25 + RRF) candidate pool
       ↓
-    evaluate_retrieval  ── flags weak / empty / too-few chunks as "low confidence"
+    rerank              ── cross-encoder scores (query, chunk) pairs for true
+                          semantic relevance; keeps top_k, attaches 0-1 scores
+      ↓
+    evaluate_retrieval  ── gates on max rerank score (empty or weak → "low")
       ↓
     ┌─── confidence == "low"? ───┐
     │                            │
@@ -27,6 +30,10 @@ Pipeline shape:
     generate_followups
       ↓
     END
+
+RRF scores are kept on each chunk for debugging but do *not* gate anything —
+RRF reflects rank position, not relevance. See commit message + MIGRATION_LOG
+addendum for why we switched.
 
 Why a graph and not the old pipe (`prompt | llm`):
 - Branching ("no results" short-circuit) is an edge, not an `if`.
@@ -68,9 +75,11 @@ class GraphState(TypedDict, total=False):
     document_id: str | None
     search_query: str
     target_files: list[str] | None
-    retrieved_chunks: list[dict]
-    confidence: str              # "high" | "low" — set by evaluate_retrieval_node
-    confidence_reason: str       # human-readable reason, for logs + debugging
+    retrieved_chunks: list[dict]    # raw RRF output — kept for debugging
+    reranked_chunks: list[dict]     # top_k after cross-encoder, best-first
+    max_rerank_score: float         # relevance of the best chunk, [0, 1]
+    confidence: str                 # "high" | "low" — set by evaluate_retrieval_node
+    confidence_reason: str          # human-readable reason, for logs + debugging
     context: str
     answer: str
     sources: list[Source]
@@ -109,9 +118,9 @@ async def route_query_node(state: GraphState) -> dict[str, Any]:
 
 async def retrieve_node(state: GraphState) -> dict[str, Any]:
     """Hybrid search: semantic (Chroma) + keyword (BM25), fused with RRF.
-    Also builds the Source list here — the raw chunks are the authoritative
-    source of both the LLM context *and* the citations, so we materialise both
-    in the same node."""
+    Returns a *candidate pool* — rerank_node narrows it down. Sources are
+    materialised later (in rerank_node) so the citations reflect what the
+    LLM actually sees, not the unranked candidate set."""
     from app.services import retrieval
 
     chunks = retrieval._hybrid_search(
@@ -121,6 +130,27 @@ async def retrieve_node(state: GraphState) -> dict[str, Any]:
         allowed_files=state.get("target_files"),
     )
 
+    return {"retrieved_chunks": chunks}
+
+
+async def rerank_node(state: GraphState) -> dict[str, Any]:
+    """Cross-encoder rerank of the RRF candidate pool.
+
+    Why this node exists: RRF scores measure *rank position* across two lists,
+    not *relevance*. Off-topic queries produce near-ceiling RRF scores because
+    something always ranks first. A cross-encoder, by contrast, scores each
+    (query, chunk) pair jointly — that's a genuine relevance signal.
+
+    We also build Sources here rather than in retrieve_node so that citations
+    match what the LLM actually sees post-rerank."""
+    from app.services import retrieval
+
+    chunks = state.get("retrieved_chunks", []) or []
+    reranked = retrieval._rerank_chunks(state["search_query"], chunks)
+    top_k = reranked[: settings.rag_rerank_top_k]
+
+    max_score = top_k[0]["rerank_score"] if top_k else 0.0
+
     sources = [
         Source(
             content=doc["content"][:200],
@@ -128,19 +158,24 @@ async def retrieve_node(state: GraphState) -> dict[str, Any]:
             section=doc["metadata"].get("section", ""),
             document_id=doc["metadata"].get("document_id", ""),
         )
-        for doc in chunks
+        for doc in top_k
     ]
 
-    return {"retrieved_chunks": chunks, "sources": sources}
+    return {
+        "reranked_chunks": top_k,
+        "max_rerank_score": max_score,
+        "sources": sources,
+    }
 
 
 async def format_context_node(state: GraphState) -> dict[str, Any]:
-    """Stitch retrieved chunks into a single string with `[SOURCE: ...]`
-    labels. The labels let the LLM distinguish which project a chunk belongs
-    to, which prevents it from attributing features across projects."""
+    """Stitch the *reranked* top_k chunks into a single string with
+    `[SOURCE: ...]` labels. The labels let the LLM distinguish which project
+    a chunk belongs to, which prevents it from attributing features across
+    projects."""
     from app.services import retrieval
 
-    context = retrieval._format_context(state["retrieved_chunks"])
+    context = retrieval._format_context(state["reranked_chunks"])
     return {"context": context}
 
 
@@ -212,58 +247,45 @@ async def generate_followups_node(state: GraphState) -> dict[str, Any]:
 
 def _evaluate_confidence(
     chunks: list[dict],
+    max_rerank_score: float,
     *,
-    threshold_hi: float,
-    threshold_mid: float,
-    min_chunks: int,
+    min_score: float,
 ) -> tuple[str, str]:
     """Classify a retrieval result as "high" or "low" confidence.
 
     Pure function — no state, no I/O — so tests can exercise every branch
-    without spinning up the graph.
+    without spinning up the graph or loading the cross-encoder.
 
-    Low confidence if ANY of:
-      1. No chunks at all.
-      2. Top score is below the strong cutoff (threshold_hi).
-      3. Fewer than min_chunks were returned AND the top score is below
-         the weaker cutoff (threshold_mid) — i.e. thin results AND not
-         overwhelmingly relevant.
+    Low confidence if:
+      1. No chunks survived retrieval + rerank, or
+      2. The most relevant chunk scored below min_score (cross-encoder
+         sigmoid-normalised output, so 0.3 ≈ "probably not useful").
     """
     if not chunks:
         return "low", "no chunks returned"
 
-    scores = [c.get("score", 0.0) for c in chunks]
-    max_score = max(scores) if scores else 0.0
-
-    if max_score < threshold_hi:
+    if max_rerank_score < min_score:
         return (
             "low",
-            f"max score {max_score:.4f} < threshold_hi {threshold_hi}",
-        )
-
-    if len(chunks) < min_chunks and max_score < threshold_mid:
-        return (
-            "low",
-            f"only {len(chunks)} chunks and max score {max_score:.4f} "
-            f"< threshold_mid {threshold_mid}",
+            f"max rerank score {max_rerank_score:.4f} < min_score {min_score}",
         )
 
     return (
         "high",
-        f"{len(chunks)} chunks, max score {max_score:.4f}",
+        f"{len(chunks)} chunks, max rerank score {max_rerank_score:.4f}",
     )
 
 
 async def evaluate_retrieval_node(state: GraphState) -> dict[str, Any]:
-    """Gate between retrieval and generation. Writes the confidence verdict
-    to state so the conditional edge can route to fallback_response without
-    the LLM ever seeing weak context."""
-    chunks = state.get("retrieved_chunks", []) or []
+    """Gate between retrieval+rerank and generation. Writes the confidence
+    verdict to state so the conditional edge can route to fallback_response
+    without the LLM ever seeing irrelevant context."""
+    chunks = state.get("reranked_chunks", []) or []
+    max_score = state.get("max_rerank_score", 0.0) or 0.0
     confidence, reason = _evaluate_confidence(
         chunks,
-        threshold_hi=settings.rag_threshold_hi,
-        threshold_mid=settings.rag_threshold_mid,
-        min_chunks=settings.rag_min_chunks,
+        max_score,
+        min_score=settings.rag_rerank_min_score,
     )
     logger.info(
         "Retrieval confidence=%s | reason=%s | question=%r",
@@ -305,6 +327,7 @@ def build_graph():
     builder.add_node("enrich_query", enrich_query_node)
     builder.add_node("route_query", route_query_node)
     builder.add_node("retrieve", retrieve_node)
+    builder.add_node("rerank", rerank_node)
     builder.add_node("evaluate_retrieval", evaluate_retrieval_node)
     builder.add_node("format_context", format_context_node)
     builder.add_node("generate_answer", generate_answer_node)
@@ -314,7 +337,8 @@ def build_graph():
     builder.add_edge(START, "enrich_query")
     builder.add_edge("enrich_query", "route_query")
     builder.add_edge("route_query", "retrieve")
-    builder.add_edge("retrieve", "evaluate_retrieval")
+    builder.add_edge("retrieve", "rerank")
+    builder.add_edge("rerank", "evaluate_retrieval")
     builder.add_conditional_edges(
         "evaluate_retrieval",
         _route_after_evaluate,

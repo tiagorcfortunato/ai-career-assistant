@@ -565,6 +565,104 @@ happy path, single-strong-chunk, and a missing-score edge case. The existing
 
 ---
 
+## Addendum (2026-04-20): RRF scores were the wrong gate — swapped in a cross-encoder reranker
+
+Yesterday's low-confidence gate (`evaluate_retrieval` thresholding the max RRF
+score) shipped with defaults copied from a design brief that assumed
+similarity-style scores in `[0, 1]`. Two smoke tests revealed the real
+problem, and it wasn't threshold tuning.
+
+### What the smoke tests showed
+
+With defaults pulled down to the observed RRF range (HI=0.02):
+
+    Query                                        max RRF score    gate
+    ─────────────────────────────────────────────────────────────────
+    "Welche Tech Skills hat Tiago?"  (on-topic)   0.083           high
+    "Wie ist das Wetter heute in Tokio?"  (off)   0.054           high
+
+**Both queries looked equally confident to the gate.** Test 2 produced a
+sensible answer only because the LLM's grounding prompt refused to
+hallucinate — the gate never fired.
+
+### Why RRF can't be the gate
+
+RRF (`1/(rank + 60)`) is a *fusion* score. It encodes rank position across
+two ranker outputs (semantic + BM25). The theoretical ceiling is ~0.033 when
+a chunk tops both lists. That ceiling is reached by *whatever* chunk happens
+to rank first — including the least-bad chunk for an off-topic query. RRF
+was never trying to measure relevance; it's trying to combine rankings.
+Using it as a relevance gate was my mistake.
+
+### The fix: cross-encoder reranker
+
+A cross-encoder scores `(query, chunk)` pairs *jointly* — same model sees
+both strings, attends across them, outputs one logit per pair. That logit,
+squashed through a sigmoid, is a real relevance signal bounded in `[0, 1]`.
+
+New shape:
+
+    retrieve → rerank → evaluate_retrieval → {format_context | fallback_response}
+
+- `retrieve` widens the RRF candidate pool to 20 (was 10). Wider pool =
+  better rerank quality; the cross-encoder will narrow back down.
+- `rerank` calls `fastembed.rerank.cross_encoder.TextCrossEncoder`, applies
+  sigmoid, sorts descending, keeps top-5 for the LLM. Attaches
+  `rerank_score` to each chunk and writes `max_rerank_score` into state.
+- `evaluate_retrieval` now gates on `max_rerank_score < RAG_RERANK_MIN_SCORE`
+  (default 0.3) instead of the RRF fused score. RRF scores stay on chunks
+  for debugging — they just don't gate anything.
+
+### Why not cosine distance (the "shortcut")
+
+Cosine distance between query and chunk embeddings is a *bi-encoder* signal
+— each string is embedded independently, no cross-attention. Cheap, but
+drops the interaction that makes a reranker a reranker. Production RAG has
+largely moved to cross-encoder rerankers (Cohere Rerank, Jina reranker, BGE
+reranker) for exactly this reason. Using cosine would've been fixing the
+symptom (threshold semantics) while ignoring the diagnosis (we need an
+actual relevance signal).
+
+### Model choice: multilingual, not MS MARCO MiniLM
+
+The brief asked for `Xenova/ms-marco-MiniLM-L-6-v2` — small, fast, ONNX. I
+implemented against it first, then ran the smoke tests. The on-topic German
+query scored sigmoid 0.12 — clean below the 0.3 default gate. MS MARCO is
+English-only, and this chatbot's traffic is German ⟷ English. Rather than
+paper over it by dropping the threshold, I switched the default to
+`jinaai/jina-reranker-v2-base-multilingual`: same fastembed/ONNX pipeline,
+no PyTorch dependency, just a multilingual checkpoint. Scores became:
+
+    Query                                        max rerank    gate
+    ─────────────────────────────────────────────────────────────────
+    "Welche Tech Skills hat Tiago?"  (on-topic)   0.807         high
+    "Wie ist das Wetter heute in Tokio?"  (off)   0.056         low
+
+Now the gate actually separates the signal from the noise. The MS MARCO
+model is still available — just set `RAG_RERANK_MODEL` in `.env` if your
+corpus is English-only and you want a smaller model.
+
+### Ops notes
+
+- `fastembed 0.3.1 → 0.8.0`. `TextCrossEncoder` landed somewhere between
+  those; `fastembed.rerank.cross_encoder` exists in 0.8. Still ONNX,
+  still single-file install, no PyTorch/CUDA.
+- `retrieval_k` default bumped `10 → 20`. The cross-encoder is cheap
+  enough (~50-200ms for 20 pairs) that feeding it a wider candidate
+  pool is essentially free and materially improves rerank quality.
+- Sources (the UI citations) now materialise in the `rerank` node rather
+  than `retrieve`. The SSE `sources` event fires after rerank, not
+  after retrieve. That means the citations the UI shows match the chunks
+  the LLM actually reasoned over — which is what "citation" implies.
+
+### Lesson worth keeping
+
+When you introduce a gate, verify the signal separates the classes before
+you tune the threshold. Threshold tuning against a non-separating signal
+just moves the failure mode around.
+
+---
+
 ## What I'd do next (not part of this migration)
 
 - Move `_hybrid_search`, `_route_query`, etc. into `app/services/_helpers.py`

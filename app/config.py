@@ -25,14 +25,24 @@ class Settings(BaseSettings):
     chroma_path: str = "./chroma_db"
     chunk_size: int = 1000
     chunk_overlap: int = 100
-    retrieval_k: int = 10
 
-    # Low-confidence retrieval thresholds, consumed by evaluate_retrieval_node.
-    # Low-confidence → bypass LLM and return a deterministic fallback answer
-    # instead of risking hallucination on weak chunks.
-    rag_threshold_hi: float = 0.3
-    rag_threshold_mid: float = 0.5
-    rag_min_chunks: int = 2
+    # Size of the RRF candidate pool handed to the reranker. Bumped from 10 to
+    # 20 because rerank quality improves with a richer candidate set — the
+    # cross-encoder narrows this back down to rag_rerank_top_k for the LLM.
+    retrieval_k: int = 20
+
+    # Cross-encoder rerank settings (see graph.py :: rerank_node and
+    # retrieval.py :: _rerank_chunks). The rerank score is the primary
+    # relevance gate — RRF scores are kept on chunks for debugging only.
+    #
+    # Default is the multilingual Jina reranker, not ms-marco-MiniLM, because
+    # production traffic to this chatbot mixes English and German and the
+    # English-only MS MARCO checkpoint scored on-topic German queries at
+    # sigmoid ~0.12 (well below 0.3) during smoke testing. Same ONNX/fastembed
+    # pipeline, just a multilingual checkpoint.
+    rag_rerank_model: str = "jinaai/jina-reranker-v2-base-multilingual"
+    rag_rerank_top_k: int = 5
+    rag_rerank_min_score: float = 0.3  # sigmoid-normalised; tune per model
 
     model_config = SettingsConfigDict(env_file=".env")
 

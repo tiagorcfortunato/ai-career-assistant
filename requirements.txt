@@ -22,8 +22,10 @@ langgraph==1.1.8
 # exporter forces the whole otel set to line up.
 opentelemetry-exporter-otlp-proto-grpc==1.41.0
 
-# Embeddings (local, lightweight via onnxruntime — avoids PyTorch/CUDA)
-fastembed==0.3.1
+# Embeddings + cross-encoder reranker (both ONNX-based, no PyTorch/CUDA).
+# Bumped from 0.3.1 → 0.8.0 because TextCrossEncoder (fastembed.rerank.cross_encoder)
+# is not in 0.3.1 — see graph.py :: rerank_node.
+fastembed==0.8.0
 
 # Vector DB. 0.5 → 1.5 is forced by langchain-chroma 1.x, which requires
 # chromadb>=1.0.20. Persisted chroma_db/ from 0.5 reads fine under 1.5 —

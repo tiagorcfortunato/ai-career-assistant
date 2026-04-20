@@ -29,6 +29,7 @@ Key design decisions:
 
 import json
 import logging
+import math
 import re
 import time
 from typing import AsyncGenerator
@@ -47,6 +48,62 @@ logger = logging.getLogger(__name__)
 
 # Fallback model to use if the primary model is rate-limited
 FALLBACK_MODEL = "llama-3.1-8b-instant"
+
+
+# ─── Cross-encoder reranker ────────────────────────────────────────────────
+#
+# RRF gives us a diverse candidate pool (semantic + keyword) but its score
+# reflects *rank position*, not *semantic relevance*. Off-topic queries still
+# produce RRF scores near the ceiling because *something* has to rank first.
+# The cross-encoder scores each (query, chunk) pair jointly and returns a
+# true relevance signal, which is what the confidence gate needs.
+#
+# Lazy singleton: the ONNX model loads once on first use (~1s cold start),
+# then every rerank call is a few ms. Tests should patch `_get_reranker` to
+# avoid downloading ~80MB of weights in CI.
+
+_reranker = None
+
+
+def _get_reranker():
+    """Return the module-level TextCrossEncoder, initialising on first call."""
+    global _reranker
+    if _reranker is None:
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+        _reranker = TextCrossEncoder(model_name=settings.rag_rerank_model)
+        logger.info("Cross-encoder loaded: %s", settings.rag_rerank_model)
+    return _reranker
+
+
+def _sigmoid(x: float) -> float:
+    """Squash a raw cross-encoder logit into a [0, 1] relevance score.
+
+    ms-marco-MiniLM and friends emit unbounded logits (~-11 very irrelevant,
+    ~+3 strongly relevant). A sigmoid turns that into a probability-shaped
+    number so thresholds in the brief (0.3 "probably not useful", 0.5+
+    "likely useful") have consistent meaning across models."""
+    # math.exp overflows for very negative x → guard it
+    if x >= 0:
+        return 1.0 / (1.0 + math.exp(-x))
+    ex = math.exp(x)
+    return ex / (1.0 + ex)
+
+
+def _rerank_chunks(query: str, chunks: list[dict]) -> list[dict]:
+    """Score each chunk against the query with the cross-encoder, attach the
+    sigmoid-normalised score as `rerank_score`, and return the list sorted
+    best-first. Returns an empty list if there's nothing to rerank."""
+    if not chunks:
+        return []
+    reranker = _get_reranker()
+    docs = [c["content"] for c in chunks]
+    logits = list(reranker.rerank(query, docs))
+    scored = [
+        {**chunk, "rerank_score": _sigmoid(logit)}
+        for chunk, logit in zip(chunks, logits)
+    ]
+    scored.sort(key=lambda c: c["rerank_score"], reverse=True)
+    return scored
 
 
 def _get_llm(model: str | None = None) -> ChatGroq:
@@ -394,10 +451,13 @@ async def query(
 
     duration = time.time() - start
     logger.info(
-        "Query completed in %.2fs | question=%r | chunks=%d | routed=%s | followups=%d",
+        "Query completed in %.2fs | question=%r | candidates=%d | reranked=%d | "
+        "max_rerank=%.3f | routed=%s | followups=%d",
         duration,
         question[:80],
         len(final_state.get("retrieved_chunks", [])),
+        len(final_state.get("reranked_chunks", [])),
+        final_state.get("max_rerank_score", 0.0) or 0.0,
         bool(final_state.get("target_files")),
         len(final_state.get("follow_ups", [])),
     )
@@ -416,7 +476,7 @@ async def stream_query(
     Streaming version of query() — drives the same graph via astream_events
     and re-emits the events we care about as SSE:
 
-      - retrieve node completes with chunks       → {"sources": [...]}
+      - rerank node completes with top_k chunks   → {"sources": [...]}
       - chat model stream from generate_answer    → {"token": "..."}
       - fallback_response completes               → {"token": "<friendly msg>"}
       - graph completes                           → {"follow_ups": [...]}
@@ -456,10 +516,13 @@ async def stream_query(
             if kind == "on_chain_end":
                 output = data.get("output") or {}
 
-                if name == "retrieve" and isinstance(output, dict):
-                    retrieved = output.get("retrieved_chunks", []) or []
-                    chunks_count = len(retrieved)
-                    if retrieved:
+                if name == "rerank" and isinstance(output, dict):
+                    # Sources come from post-rerank top_k, not the raw
+                    # candidate pool — that way the citations the UI shows
+                    # match what the LLM actually reasoned over.
+                    reranked = output.get("reranked_chunks", []) or []
+                    chunks_count = len(reranked)
+                    if reranked:
                         sources_payload = [
                             {
                                 "content": doc["content"][:200],
@@ -467,7 +530,7 @@ async def stream_query(
                                 "page": doc["metadata"].get("page", 0),
                                 "filename": doc["metadata"].get("filename", ""),
                             }
-                            for doc in retrieved
+                            for doc in reranked
                         ]
                         yield f"data: {json.dumps({'sources': sources_payload})}\n\n"
 
