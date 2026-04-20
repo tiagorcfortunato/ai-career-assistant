@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     rag_rerank_top_k: int = 5
     rag_rerank_min_score: float = 0.3  # sigmoid-normalised; tune per model
 
+    # Feature flag for the cross-encoder reranker. Disabled in production on
+    # t3.micro (reranker ONNX ≈ 350 MB RAM; host only has 916 MB total, so
+    # the reranker pushes the stack past OOM). With the flag off, graph.py
+    # skips the rerank + relevance-gate step and the pipeline falls back to
+    # RRF top-k selection. The full reranker code and tests stay in the repo
+    # — flip this to true once the instance is upgraded to t3.small/bigger.
+    rag_rerank_enabled: bool = True
+
     model_config = SettingsConfigDict(env_file=".env")
 
 

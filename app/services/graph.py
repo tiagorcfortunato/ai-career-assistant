@@ -142,14 +142,25 @@ async def rerank_node(state: GraphState) -> dict[str, Any]:
     (query, chunk) pair jointly — that's a genuine relevance signal.
 
     We also build Sources here rather than in retrieve_node so that citations
-    match what the LLM actually sees post-rerank."""
+    match what the LLM actually sees post-rerank.
+
+    Feature flag `rag_rerank_enabled` (see config.py): when false we skip the
+    cross-encoder entirely and return the RRF top_k directly. The downstream
+    gate then reduces to "did retrieval return anything?" — we lose the
+    relevance-quality signal but gain ~350 MB of RAM, which is the difference
+    between serving and OOM on a 1 GB instance.
+    """
     from app.services import retrieval
 
     chunks = state.get("retrieved_chunks", []) or []
-    reranked = retrieval._rerank_chunks(state["search_query"], chunks)
-    top_k = reranked[: settings.rag_rerank_top_k]
 
-    max_score = top_k[0]["rerank_score"] if top_k else 0.0
+    if settings.rag_rerank_enabled:
+        reranked = retrieval._rerank_chunks(state["search_query"], chunks)
+        top_k = reranked[: settings.rag_rerank_top_k]
+        max_score = top_k[0]["rerank_score"] if top_k else 0.0
+    else:
+        top_k = chunks[: settings.rag_rerank_top_k]
+        max_score = 1.0 if top_k else 0.0
 
     sources = [
         Source(
