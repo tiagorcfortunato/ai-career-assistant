@@ -1,0 +1,132 @@
+name: Bootstrap ChromaDB + Model Cache
+
+# One-off workflow: ingests all knowledge bases on a GitHub runner (4 GB RAM +
+# fast network), pre-warms the fastembed model cache, and rsyncs both to the
+# EC2 host volume at /home/ec2-user/chatbot-data/{chroma_db,models}.
+#
+# Run this:
+#   1. Once after EC2 is set up with empty /home/ec2-user/chatbot-data dirs
+#   2. Again whenever a data/*.md knowledge base changes (force re-ingest)
+#
+# After this runs, `deploy.yml` can ship new code without re-ingesting — the
+# container starts in ~5 s because ChromaDB + model weights already live on
+# the host volume and are mounted into the container.
+
+on:
+  workflow_dispatch:
+    inputs:
+      wipe_existing:
+        description: "Wipe the remote chroma_db before rsync (full re-ingest)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ingest knowledge bases locally
+        env:
+          GROQ_API_KEY: dummy-bootstrap-not-used-for-ingestion
+          CHROMA_PATH: ./chroma_db
+        run: |
+          python -c "
+          from pathlib import Path
+          from app.services.ingestion import ingest_markdown
+
+          files = [
+              'data/knowledge_base.md',
+              'data/odys_knowledge.md',
+              'data/rag_chatbot_knowledge.md',
+              'data/inspection_api_knowledge.md',
+          ]
+          for f in files:
+              p = Path(f)
+              if not p.exists():
+                  print(f'skip {f} (missing)')
+                  continue
+              doc_id, chunks = ingest_markdown(p, p.name)
+              print(f'ingested {f}: doc_id={doc_id} chunks={chunks}')
+          "
+
+      - name: Pre-warm fastembed model cache
+        env:
+          GROQ_API_KEY: dummy-bootstrap-not-used-for-warmup
+        run: |
+          python -c "
+          from fastembed import TextEmbedding
+          from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+          emb = TextEmbedding(model_name='BAAI/bge-small-en-v1.5')
+          list(emb.embed(['warmup']))
+          print('embedding cache warmed')
+
+          rk = TextCrossEncoder(model_name='jinaai/jina-reranker-v2-base-multilingual')
+          list(rk.rerank('warmup query', ['warmup doc']))
+          print('reranker cache warmed')
+          "
+
+      - name: Show sizes before rsync
+        run: |
+          du -sh chroma_db/ ~/.cache/fastembed/ 2>/dev/null || true
+          ls -la chroma_db/ ~/.cache/fastembed/ 2>/dev/null || true
+
+      - name: Configure SSH
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Optional wipe of remote chroma_db
+        if: ${{ inputs.wipe_existing }}
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/ec2_key "$EC2_USER@$EC2_HOST" \
+            'rm -rf /home/ec2-user/chatbot-data/chroma_db/* && echo wiped'
+
+      - name: Rsync chroma_db to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/ec2_key -o StrictHostKeyChecking=no" \
+            chroma_db/ \
+            "$EC2_USER@$EC2_HOST:/home/ec2-user/chatbot-data/chroma_db/"
+
+      - name: Rsync fastembed cache to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/ec2_key -o StrictHostKeyChecking=no" \
+            ~/.cache/fastembed/ \
+            "$EC2_USER@$EC2_HOST:/home/ec2-user/chatbot-data/models/"
+
+      - name: Verify remote volumes
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/ec2_key "$EC2_USER@$EC2_HOST" \
+            'du -sh /home/ec2-user/chatbot-data/chroma_db /home/ec2-user/chatbot-data/models && \
+             ls /home/ec2-user/chatbot-data/chroma_db | head && \
+             ls /home/ec2-user/chatbot-data/models | head'

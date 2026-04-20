@@ -3,20 +3,18 @@ app/main.py — Application Entry Point
 
 This is where the FastAPI app is created and configured. It handles:
 1. Lifespan: on startup, auto-ingests the knowledge base (if not already indexed)
-2. Keep-alive: background task pings /health every 10 min to prevent Render free tier spin-down
+2. Readiness: /health returns 503 while startup is running, 200 once ready
 3. Middleware: CORS (allows cross-origin requests), static file serving
 4. Routing: mounts the API router at /api and serves the frontend at /
 
 Think of this as the "manager" — it wires everything together but doesn't do the actual work.
 """
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -29,7 +27,10 @@ KNOWLEDGE_BASE_PATH = Path("data/knowledge_base.md")
 ODYS_KNOWLEDGE_PATH = Path("data/odys_knowledge.md")
 RAG_KNOWLEDGE_PATH = Path("data/rag_chatbot_knowledge.md")
 INSPECTION_KNOWLEDGE_PATH = Path("data/inspection_api_knowledge.md")
-# Thesis content is included in knowledge_base.md to avoid OOM on t3.micro
+
+# Readiness flag — flipped to True once lifespan startup is complete.
+# /health reads this to decide between 503 (starting) and 200 (ready).
+_is_ready = False
 
 
 def _is_already_ingested(filename: str) -> bool:
@@ -40,73 +41,36 @@ def _is_already_ingested(filename: str) -> bool:
     return len(results.get("ids", [])) > 0
 
 
+def _ensure_ingested(path: Path, label: str) -> None:
+    if not path.exists():
+        logger.warning("%s knowledge base not found at '%s' — skipping.", label, path)
+        return
+    filename = path.name
+    if _is_already_ingested(filename):
+        logger.info("%s knowledge '%s' already indexed — skipping.", label, filename)
+        return
+    from app.services.ingestion import ingest_markdown
+    doc_id, chunks = ingest_markdown(path, filename)
+    logger.info(
+        "%s knowledge loaded: '%s' → document_id=%s, chunks=%d",
+        label, filename, doc_id, chunks,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if KNOWLEDGE_BASE_PATH.exists():
-        filename = KNOWLEDGE_BASE_PATH.name
-        if _is_already_ingested(filename):
-            logger.info("Knowledge base '%s' already indexed — skipping.", filename)
-        else:
-            from app.services.ingestion import ingest_markdown
-            doc_id, chunks = ingest_markdown(KNOWLEDGE_BASE_PATH, filename)
-            logger.info(
-                "Knowledge base loaded: '%s' → document_id=%s, chunks=%d",
-                filename, doc_id, chunks,
-            )
-    else:
-        logger.warning("Knowledge base not found at '%s' — skipping auto-load.", KNOWLEDGE_BASE_PATH)
-
-    # Auto-ingest Odys deep-dive knowledge base
-    if ODYS_KNOWLEDGE_PATH.exists():
-        odys_filename = ODYS_KNOWLEDGE_PATH.name
-        if _is_already_ingested(odys_filename):
-            logger.info("Odys knowledge '%s' already indexed — skipping.", odys_filename)
-        else:
-            from app.services.ingestion import ingest_markdown
-            doc_id, chunks = ingest_markdown(ODYS_KNOWLEDGE_PATH, odys_filename)
-            logger.info(
-                "Odys knowledge loaded: '%s' → document_id=%s, chunks=%d",
-                odys_filename, doc_id, chunks,
-            )
-
-    # Auto-ingest RAG chatbot deep-dive knowledge base
-    if RAG_KNOWLEDGE_PATH.exists():
-        rag_filename = RAG_KNOWLEDGE_PATH.name
-        if _is_already_ingested(rag_filename):
-            logger.info("RAG knowledge '%s' already indexed — skipping.", rag_filename)
-        else:
-            from app.services.ingestion import ingest_markdown
-            doc_id, chunks = ingest_markdown(RAG_KNOWLEDGE_PATH, rag_filename)
-            logger.info(
-                "RAG knowledge loaded: '%s' → document_id=%s, chunks=%d",
-                rag_filename, doc_id, chunks,
-            )
-
-    # Auto-ingest Inspection API deep-dive knowledge base
-    if INSPECTION_KNOWLEDGE_PATH.exists():
-        insp_filename = INSPECTION_KNOWLEDGE_PATH.name
-        if _is_already_ingested(insp_filename):
-            logger.info("Inspection API knowledge '%s' already indexed — skipping.", insp_filename)
-        else:
-            from app.services.ingestion import ingest_markdown
-            doc_id, chunks = ingest_markdown(INSPECTION_KNOWLEDGE_PATH, insp_filename)
-            logger.info(
-                "Inspection API knowledge loaded: '%s' → document_id=%s, chunks=%d",
-                insp_filename, doc_id, chunks,
-            )
-
-    # Keep-alive: ping self every 10 min so free Render instance doesn't spin down
-    async def _keep_alive():
-        await asyncio.sleep(30)  # wait for server to finish starting
-        async with httpx.AsyncClient() as client:
-            while True:
-                try:
-                    await client.get("http://localhost:8000/health", timeout=10)
-                except Exception:
-                    pass
-                await asyncio.sleep(600)  # every 10 minutes
-
-    asyncio.create_task(_keep_alive())
+    global _is_ready
+    _is_ready = False
+    try:
+        _ensure_ingested(KNOWLEDGE_BASE_PATH, "Base")
+        _ensure_ingested(ODYS_KNOWLEDGE_PATH, "Odys")
+        _ensure_ingested(RAG_KNOWLEDGE_PATH, "RAG")
+        _ensure_ingested(INSPECTION_KNOWLEDGE_PATH, "Inspection API")
+        _is_ready = True
+        logger.info("Lifespan startup complete — /health now returns 200.")
+    except Exception:
+        logger.exception("Lifespan startup failed — /health will keep returning 503.")
+        raise
     yield
 
 
@@ -129,7 +93,10 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 @app.get("/health")
-def health():
+def health(response: Response):
+    if not _is_ready:
+        response.status_code = 503
+        return {"status": "starting"}
     return {"status": "ok"}
 
 
