@@ -15,12 +15,14 @@ Pipeline shape:
       ↓
     retrieve            ── hybrid (semantic + BM25 + RRF) search
       ↓
-    ┌─── retrieved_chunks empty? ───┐
-    │                               │
-    ↓ no                            ↓ yes
-    format_context                  fallback_response
-      ↓                               ↓
-    generate_answer                  END
+    evaluate_retrieval  ── flags weak / empty / too-few chunks as "low confidence"
+      ↓
+    ┌─── confidence == "low"? ───┐
+    │                            │
+    ↓ no                         ↓ yes
+    format_context               fallback_response
+      ↓                            ↓
+    generate_answer               END
       ↓
     generate_followups
       ↓
@@ -67,6 +69,8 @@ class GraphState(TypedDict, total=False):
     search_query: str
     target_files: list[str] | None
     retrieved_chunks: list[dict]
+    confidence: str              # "high" | "low" — set by evaluate_retrieval_node
+    confidence_reason: str       # human-readable reason, for logs + debugging
     context: str
     answer: str
     sources: list[Source]
@@ -206,9 +210,72 @@ async def generate_followups_node(state: GraphState) -> dict[str, Any]:
     return {"follow_ups": follow_ups}
 
 
+def _evaluate_confidence(
+    chunks: list[dict],
+    *,
+    threshold_hi: float,
+    threshold_mid: float,
+    min_chunks: int,
+) -> tuple[str, str]:
+    """Classify a retrieval result as "high" or "low" confidence.
+
+    Pure function — no state, no I/O — so tests can exercise every branch
+    without spinning up the graph.
+
+    Low confidence if ANY of:
+      1. No chunks at all.
+      2. Top score is below the strong cutoff (threshold_hi).
+      3. Fewer than min_chunks were returned AND the top score is below
+         the weaker cutoff (threshold_mid) — i.e. thin results AND not
+         overwhelmingly relevant.
+    """
+    if not chunks:
+        return "low", "no chunks returned"
+
+    scores = [c.get("score", 0.0) for c in chunks]
+    max_score = max(scores) if scores else 0.0
+
+    if max_score < threshold_hi:
+        return (
+            "low",
+            f"max score {max_score:.4f} < threshold_hi {threshold_hi}",
+        )
+
+    if len(chunks) < min_chunks and max_score < threshold_mid:
+        return (
+            "low",
+            f"only {len(chunks)} chunks and max score {max_score:.4f} "
+            f"< threshold_mid {threshold_mid}",
+        )
+
+    return (
+        "high",
+        f"{len(chunks)} chunks, max score {max_score:.4f}",
+    )
+
+
+async def evaluate_retrieval_node(state: GraphState) -> dict[str, Any]:
+    """Gate between retrieval and generation. Writes the confidence verdict
+    to state so the conditional edge can route to fallback_response without
+    the LLM ever seeing weak context."""
+    chunks = state.get("retrieved_chunks", []) or []
+    confidence, reason = _evaluate_confidence(
+        chunks,
+        threshold_hi=settings.rag_threshold_hi,
+        threshold_mid=settings.rag_threshold_mid,
+        min_chunks=settings.rag_min_chunks,
+    )
+    logger.info(
+        "Retrieval confidence=%s | reason=%s | question=%r",
+        confidence, reason, state.get("question", "")[:80],
+    )
+    return {"confidence": confidence, "confidence_reason": reason}
+
+
 async def fallback_response_node(state: GraphState) -> dict[str, Any]:
-    """Nothing came back from retrieval. Return a friendly suggestion rather
-    than an empty answer or a hallucinated one."""
+    """Low-confidence retrieval (empty, weak, or too-few chunks). Return a
+    friendly suggestion rather than letting the LLM hallucinate over the
+    irrelevant chunks it would otherwise be handed."""
     return {
         "answer": (
             "I couldn't find any relevant information about that topic. "
@@ -222,11 +289,11 @@ async def fallback_response_node(state: GraphState) -> dict[str, Any]:
 
 # ─── Conditional edge ──────────────────────────────────────────────────────
 
-def _route_after_retrieve(state: GraphState) -> str:
-    """Return the name of the next node based on whether we got any chunks."""
-    if state.get("retrieved_chunks"):
-        return "format_context"
-    return "fallback_response"
+def _route_after_evaluate(state: GraphState) -> str:
+    """Dispatch based on the confidence verdict written by evaluate_retrieval."""
+    if state.get("confidence") == "low":
+        return "fallback_response"
+    return "format_context"
 
 
 # ─── Graph assembly ────────────────────────────────────────────────────────
@@ -238,6 +305,7 @@ def build_graph():
     builder.add_node("enrich_query", enrich_query_node)
     builder.add_node("route_query", route_query_node)
     builder.add_node("retrieve", retrieve_node)
+    builder.add_node("evaluate_retrieval", evaluate_retrieval_node)
     builder.add_node("format_context", format_context_node)
     builder.add_node("generate_answer", generate_answer_node)
     builder.add_node("generate_followups", generate_followups_node)
@@ -246,9 +314,10 @@ def build_graph():
     builder.add_edge(START, "enrich_query")
     builder.add_edge("enrich_query", "route_query")
     builder.add_edge("route_query", "retrieve")
+    builder.add_edge("retrieve", "evaluate_retrieval")
     builder.add_conditional_edges(
-        "retrieve",
-        _route_after_retrieve,
+        "evaluate_retrieval",
+        _route_after_evaluate,
         {
             "format_context": "format_context",
             "fallback_response": "fallback_response",

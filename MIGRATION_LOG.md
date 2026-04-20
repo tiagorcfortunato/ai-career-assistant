@@ -499,6 +499,72 @@ now *data*, not spaghetti.
 
 ---
 
+## Addendum (2026-04-19): low-confidence fallback edge
+
+The first post-migration payoff — and exactly the kind of change that motivated
+moving to LangGraph in the first place. Production symptom: when retrieval
+returned weak or off-topic chunks, the LLM would sometimes confidently paper
+over the gap with a plausible-sounding answer. We had a fallback for the
+*empty* retrieval case but nothing for the *weak* case.
+
+### Shape of the change
+
+A new node, `evaluate_retrieval`, sits between `retrieve` and `format_context`
+and classifies the retrieval result as `"high"` or `"low"` confidence. The edge
+that used to fork on `len(chunks) == 0` now forks on `confidence == "low"`,
+which subsumes the old check and adds two more conditions.
+
+    retrieve → evaluate_retrieval → {format_context | fallback_response}
+
+The classifier is a pure function (`_evaluate_confidence`) so the tests don't
+need to spin up the graph:
+
+    low if:
+      len(chunks) == 0                                   # old check
+      or max(scores) < THRESHOLD_HI                      # weak top chunk
+      or (len(chunks) < MIN_CHUNKS and max(scores) < THRESHOLD_MID)  # thin + mediocre
+
+### Surfacing scores
+
+`_hybrid_search` used to discard the fused RRF score after sorting — the tuple
+was unpacked as `for key, _ in ranked[:k]`. I attached the score back onto
+each returned chunk (`{**doc_map[key], "score": score}`) so the evaluate node
+can read it without re-running any search. The downstream nodes ignore the
+extra field and nothing else had to change.
+
+### Thresholds are env-configurable
+
+`RAG_THRESHOLD_HI`, `RAG_THRESHOLD_MID`, `RAG_MIN_CHUNKS` all live in `Settings`
+with defaults 0.3 / 0.5 / 2. Those are the nominal values from the design
+brief, written as if scores were in a [0, 1] similarity range. **The actual
+RRF fused score is much smaller** — with two result lists at `rrf_k=60`, the
+theoretical maximum is `2/60 ≈ 0.033`. So with the defaults as-written, every
+query classifies as low-confidence and hits the fallback. Noted this in
+`.env.example` with a suggested tuning (HI≈0.02, MID≈0.015) but left the
+defaults matching the brief so tuning is an explicit, observable decision
+rather than something I silently chose.
+
+The `evaluate_retrieval_node` logs `confidence=... | reason=... | question=...`
+on every invocation, which gives us the data to tune from after a day of
+traffic — and also the foundation for a "low-confidence rate" metric in
+whatever eval pipeline comes next.
+
+### Why the node is thin
+
+The node is two lines of logic around a pure function. I did that deliberately:
+the graph node is the I/O wrapper (reads state, writes state, logs), the pure
+function is the testable decision. Same separation as the retrieval helpers
+vs. the retrieve node — orchestration here, logic there.
+
+### Tests
+
+`tests/test_evaluate_retrieval.py` hits every branch of the classifier without
+touching ChromaDB, Groq, or the graph: empty, weak-top, few-and-mediocre,
+happy path, single-strong-chunk, and a missing-score edge case. The existing
+13 tests still pass; the total is now 20.
+
+---
+
 ## What I'd do next (not part of this migration)
 
 - Move `_hybrid_search`, `_route_query`, etc. into `app/services/_helpers.py`

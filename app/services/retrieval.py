@@ -247,9 +247,12 @@ def _hybrid_search(
                 "metadata": doc["metadata"],
             }
 
-    # 4. Sort by fused score and return top-k
+    # 4. Sort by fused score and return top-k. The fused score is attached to
+    # each chunk so downstream nodes (evaluate_retrieval) can gauge confidence
+    # without re-running the search. Range is bounded above by 2/rrf_k ≈ 0.033
+    # when a doc tops both lists, so thresholds must live in that range.
     ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-    return [doc_map[key] for key, _ in ranked[:k]]
+    return [{**doc_map[key], "score": score} for key, score in ranked[:k]]
 
 
 # ─── Vector store ────────────────────────────────────────────────────────────

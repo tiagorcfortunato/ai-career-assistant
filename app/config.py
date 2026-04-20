@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     chunk_overlap: int = 100
     retrieval_k: int = 10
 
+    # Low-confidence retrieval thresholds, consumed by evaluate_retrieval_node.
+    # Low-confidence → bypass LLM and return a deterministic fallback answer
+    # instead of risking hallucination on weak chunks.
+    rag_threshold_hi: float = 0.3
+    rag_threshold_mid: float = 0.5
+    rag_min_chunks: int = 2
+
     model_config = SettingsConfigDict(env_file=".env")
 
 
