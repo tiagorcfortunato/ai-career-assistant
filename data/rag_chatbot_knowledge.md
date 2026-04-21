@@ -60,7 +60,7 @@ Originally built as a general-purpose PDF chatbot, Tiago evolved it into a caree
 - **FastAPI 0.115** (Python backend framework)
 - **Python 3.11** (Docker base image)
 - **LangChain 0.3** + **langchain-groq 0.2** + **langchain-chroma 0.1.4** (orchestration)
-- **Groq API** with **Llama 3.1 8B Instant** (LLM inference)
+- **Groq API** with **Llama 3.3 70B Versatile** (primary LLM, temperature=0) and **Llama 3.1 8B Instant** (automatic rate-limit fallback, plus follow-up-question generation)
 - **BAAI/bge-small-en-v1.5** via **fastembed 0.3.1** (local embeddings, ~80MB, 384-dim vectors)
 - **ChromaDB 0.5** (persistent vector store)
 - **rank_bm25 0.2.2** (pure-Python BM25 keyword search)
@@ -71,6 +71,45 @@ Originally built as a general-purpose PDF chatbot, Tiago evolved it into a caree
 - **Nginx 1.28** (reverse proxy on EC2)
 - **Let's Encrypt / Certbot** (SSL)
 - **Docker** + **Docker Compose**
+
+---
+
+## Embedding Model — BAAI/bge-small-en-v1.5 via fastembed
+
+The chatbot embeds text using **`BAAI/bge-small-en-v1.5`**, executed via the **`fastembed`** library (ONNX runtime), **not** sentence-transformers.
+
+**Model properties:**
+- 384-dimensional embeddings
+- ~80 MB on disk
+- State-of-the-art in the small-model tier per the MTEB benchmark
+- Sufficient semantic expressiveness for 500-character chunks
+
+**Why not `bge-large`?** Would score 2-3 MTEB points higher but costs ~1.3 GB RAM to load. On a t3.micro (1 GB total RAM), this is OOM. Realistic only after instance upgrade.
+
+**Why fastembed over sentence-transformers?**
+1. **No PyTorch dependency.** sentence-transformers pulls torch + CUDA libs totalling 1-2 GB. fastembed uses the ONNX runtime, ~80 MB install footprint.
+2. **t3.micro-friendly.** ONNX runs on CPU with ~10-50 ms per embed latency. No GPU needed.
+3. **Cold-start behavior.** ONNX loads in ~200 ms; PyTorch models take significantly longer.
+
+**Integration.** `FastEmbeddings` in `app/services/embeddings.py` is a thin adapter that implements LangChain's `Embeddings` interface (`embed_documents`, `embed_query`). ChromaDB consumes it like any other LangChain-compatible embedder.
+
+**Clarification on ChromaDB's role.** ChromaDB is the vector database — it stores the embeddings produced by BGE. ChromaDB itself does not compute embeddings. The two components are distinct: the embedding model is `BAAI/bge-small-en-v1.5` (via fastembed), and the vector store is ChromaDB.
+
+---
+
+## LLM / Sprachmodell — Llama 3.3 70B via Groq (with 8B fallback)
+
+*Which LLM does the chatbot use? Welches Sprachmodell nutzt der Chatbot für die Antwortgenerierung?*
+
+The RAG Career Chatbot uses **two Llama models via the Groq API** for answer generation — a layered setup where the larger model answers by default and a smaller one catches rate-limit recovery and best-effort follow-up generation. This is the **primary LLM stack** of the chatbot, distinct from the embedding model (`BAAI/bge-small-en-v1.5` via fastembed) which only produces vectors.
+
+**Primary LLM — `llama-3.3-70b-versatile`.** All user-facing answer generation runs through this 70B model via `ChatGroq` with `temperature=0` (deterministic output). Configured through the `LLM_MODEL` environment variable. Answers are streamed token-by-token via `.astream()` from the `generate_answer_node` in the LangGraph pipeline.
+
+**Fallback LLM — `llama-3.1-8b-instant`.** Hard-coded in `app/services/retrieval.py` as `FALLBACK_MODEL`. Activated inside `generate_answer_node` via a `try/except` on Groq rate-limit errors (HTTP 429). The fallback lives as error recovery inside the node, **not** as a pipeline branch. The same 8B model also runs the separate `_generate_followups()` call that produces three follow-up question suggestions after each answer — best-effort, fails silently if the model errors.
+
+**Why two tiers?** Llama 3.3 70B produces noticeably richer answers but has tighter daily rate limits on Groq's free tier. The 8B model is always available but shallower. The layered setup means users never see a 429 error — the worst case is a shallower answer from the 8B fallback for the duration of the rate-limit window. The RAGAS evaluation was originally run on the earlier 8B-only configuration, where Faithfulness plateaued around 0.5 due to model-size ceiling; a fresh evaluation against the 3.3 70B primary is pending.
+
+**Why Groq and not OpenAI / Anthropic?** Groq's custom LPU (Language Processing Unit) hardware runs Llama 3.3 70B at 500+ tokens per second — compared to GPT-4's ~50 tokens/sec. For a streaming chatbot, that's the difference between feeling instant and feeling laggy. Groq's free tier is generous enough for portfolio traffic; at paid volume, per-token pricing sits below GPT-4 levels.
 
 ---
 
@@ -153,7 +192,12 @@ Reciprocal Rank Fusion (RRF)
     └── score(doc) = Σ 1 / (rank + 60) across both result lists
         (60 is the standard constant from the original RRF paper)
     ↓
-Top-k fused chunks (default k=8)
+RRF candidate pool (retrieval_k = 20)
+    ↓
+Cross-encoder rerank → top-5 best-first (rag_rerank_top_k = 5)
+    (feature-flagged; when flag is off in prod, RRF top-5 passed through as-is)
+    ↓
+Confidence gate: max_rerank_score >= 0.3 → continue, else → fallback_response
     ↓
 LangChain ChatPromptTemplate
     ├── System prompt (Product Engineer persona, faithfulness rules)
@@ -161,7 +205,8 @@ LangChain ChatPromptTemplate
     ├── Context string (joined chunks with "---" separators)
     └── User question
     ↓
-Groq LLM (llama-3.1-8b-instant, temperature=0)
+Groq LLM — primary: llama-3.3-70b-versatile, temperature=0
+        fallback on 429: llama-3.1-8b-instant
     ↓
 Response:
     ├── /api/query → full JSON with answer + sources
@@ -175,12 +220,80 @@ Response:
 
 ---
 
+## LangGraph Orchestration
+
+The retrieval pipeline is orchestrated via a **LangGraph `StateGraph`** with a typed `GraphState` TypedDict. The migration from LCEL to LangGraph was driven by a concrete need: branching logic.
+
+**Why LangGraph over LCEL.** The original implementation was a linear LCEL chain (`prompt | llm`). As soon as branching was needed — first for the empty-retrieval fallback, later for the confidence-gate fallback — LCEL would have turned into nested `Runnable.bind()` calls with lambda glue, an if-spaghetti flow that is hard to test and extend. LangGraph makes the pipeline first-class:
+
+- **Nodes are typed async functions** — each testable in isolation
+- **Edges are declarative** — conditional routing via named functions
+- **State is a TypedDict** with `total=False` — each node writes only the fields it produces, the runtime merges partial updates
+- **Streaming comes for free** — `astream_events(version="v2")` emits typed events per node transition; `on_chat_model_stream` events from the `generate_answer` node are forwarded as SSE tokens to the browser
+
+**Node sequence (execution order on every query):**
+1. `enrich_query_node` — prepends conversation history to short follow-up queries (<5 words + history exists)
+2. `route_query_node` — keyword-based project scoping (e.g. "odys" → `odys_knowledge.md` + `knowledge_base.md`)
+3. `retrieve_node` — hybrid search: Chroma semantic similarity (k*2) + BM25 keyword (k*2), fused via Reciprocal Rank Fusion, top-20 candidates
+4. `rerank_node` — Jina cross-encoder scoring, cut to top-5 (feature-flagged, disabled in prod due to t3.micro RAM budget)
+5. `evaluate_retrieval_node` — writes confidence verdict: `"high"` if `max_rerank_score >= 0.3`, else `"low"`
+6. **Conditional edge:** `"low"` → `fallback_response_node` (deterministic message, no LLM call) | `"high"` → `format_context_node`
+7. `format_context_node` — builds `[SOURCE: PROJECT NAME]` labels per chunk
+8. `generate_answer_node` — streams Llama 3.3 70B via Groq, with rate-limit fallback to Llama 3.1 8B
+9. `generate_followups_node` — 3 follow-up questions via the 8B model, best-effort (fails silently)
+
+**State schema:**
+```python
+class GraphState(TypedDict, total=False):
+    question: str
+    history: list[ChatMessage]
+    document_id: str | None
+    search_query: str
+    target_files: list[str] | None
+    retrieved_chunks: list[dict]
+    reranked_chunks: list[dict]
+    max_rerank_score: float
+    confidence: str
+    confidence_reason: str
+    context: str
+    answer: str
+    sources: list[Source]
+    follow_ups: list[str]
+```
+
+**Key architectural property.** LangGraph's separation of state, nodes, and edges makes every node individually testable (see `tests/test_rerank.py`, `tests/test_evaluate_retrieval.py`) and lets the full pipeline be exercised via either `graph.ainvoke()` (full response) or `graph.astream_events()` (streaming) — one pipeline, two consumption modes, zero duplication.
+
+---
+
+## Cross-Encoder Reranker & Confidence Gate
+
+After the Reciprocal Rank Fusion stage returns the top-20 candidates, an optional cross-encoder reranker produces the final relevance scores that drive the confidence gate.
+
+**Model.** `jinaai/jina-reranker-v2-base-multilingual` — a ~350 MB ONNX model that runs each (query, chunk) pair jointly through the transformer and emits one logit per pair. Sigmoid-normalised into `[0, 1]` range. Multilingual was a deliberate choice: traffic patterns mix German ↔ English, and the English-only alternative `ms-marco-MiniLM-L-6-v2` scored on-topic German queries at only ~0.12 — a gate failure caused by model language, not content irrelevance.
+
+**Pipeline position.** After `retrieve_node` (RRF top-20), before `evaluate_retrieval_node` (confidence gate). The reranker writes `reranked_chunks` (top-5 best-first) and `max_rerank_score`; the gate then classifies `"high"` (≥ 0.3) or `"low"` (< 0.3 or no chunks).
+
+**Feature flag.** `rag_rerank_enabled` — code default `True` (so dev and CI exercise the full pipeline), production override `False` via env var. Reason: the Jina ONNX model adds ~350 MB to the RAM footprint; together with embedder + Chroma + Python runtime on a t3.micro (1 GB total RAM), the reranker pushes the stack past OOM. Re-enabling is a single env flip after upgrading to t3.small.
+
+**With flag off (current prod state):** `rerank_node` slices the RRF top-5 through as-is, writes `max_rerank_score = 1.0`, and the confidence gate effectively reduces to an empty check. The off-topic gate is missing, but the tight system prompt ("NEVER fill gaps with assumptions") keeps the LLM from hallucinating on off-topic queries.
+
+**Lesson learned — signal separation before threshold tuning.** The first version of the confidence gate used the RRF fused score as the relevance signal, since it was already computed. Smoke tests then showed that on-topic and off-topic queries both produced scores in the ~0.03–0.08 range, and the gate fired almost randomly. The reason: RRF measures **rank position**, not semantic relevance — even an off-topic query produces values near the ceiling because *something* has to be rank 1. Switching to a cross-encoder score — which jointly scores (query, chunk) pairs — produced a **14× score separation**:
+
+| Query type | Example | Top rerank_score |
+|---|---|---|
+| On-topic | *"Welche Tech Skills hat Tiago?"* | **0.807** |
+| Off-topic | *"Wie ist das Wetter heute in Tokio?"* | **0.056** |
+
+The broader lesson: when you build a gate, verify the signal separates your two classes *before* tuning the threshold. If on-topic and off-topic land in the same range, no threshold will save you.
+
+---
+
 ## Key Technical Decisions
 
 | Decision | The "Why" |
 |---|---|
 | **FastAPI over Flask/Django** | Async-first (needed for streaming SSE), automatic OpenAPI docs at `/docs`, Pydantic validation integrated |
-| **Llama 3.1 8B via Groq** | Free tier available, fast inference (~100ms), sufficient quality for the task. Tried different models during development. |
+| **Llama 3.3 70B Versatile via Groq (primary) + Llama 3.1 8B Instant (fallback)** | Groq's LPU hardware runs Llama 3.3 70B at 500+ tokens/sec (vs GPT-4's ~50) — makes streaming feel instant. Automatic fallback to 8B on 429 rate-limit errors keeps the chat responsive under load. The 8B model also powers best-effort follow-up-question generation (fails silently if that call errors). |
 | **Local embeddings (fastembed) over OpenAI embeddings** | Zero API cost, ~1ms latency vs ~200ms for remote APIs, works offline, small model (~80MB) |
 | **ChromaDB over Pinecone/Weaviate** | Local persistence, no external service, simple Python API, free |
 | **Hybrid search (semantic + BM25) instead of pure semantic** | Semantic search alone misses exact technical terms like "FastAPI" when embeddings don't capture them well. BM25 catches them. RRF combines the strengths without needing to tune a weight. |
@@ -340,12 +453,16 @@ GET  /api/documents           — List all ingested documents
 | Variable | Default | Description |
 |---|---|---|
 | `GROQ_API_KEY` | required | Your Groq API key (free at console.groq.com) |
-| `LLM_MODEL` | `llama-3.1-8b-instant` | Groq model to use |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | Primary Groq model. 8B fallback (`llama-3.1-8b-instant`) is hard-coded in `retrieval.py` for 429 recovery + follow-up generation. |
 | `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Local embedding model |
-| `CHROMA_PATH` | `./chroma_db` | ChromaDB persistence directory |
+| `CHROMA_PATH` | `./chroma_db` | ChromaDB persistence directory (container mounts host volume here) |
 | `CHUNK_SIZE` | `500` | Max characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Overlap between chunks |
-| `RETRIEVAL_K` | `8` | Number of chunks retrieved per query (after RRF) |
+| `RETRIEVAL_K` | `20` | RRF candidate pool size (before reranker narrows to `RAG_RERANK_TOP_K`) |
+| `RAG_RERANK_MODEL` | `jinaai/jina-reranker-v2-base-multilingual` | Cross-encoder checkpoint used when rerank is enabled |
+| `RAG_RERANK_TOP_K` | `5` | Post-rerank cut — how many chunks reach the LLM |
+| `RAG_RERANK_MIN_SCORE` | `0.3` | Sigmoid-normalised threshold for the confidence gate |
+| `RAG_RERANK_ENABLED` | `true` (code) / `false` (prod) | Feature flag — off in prod on t3.micro due to 350 MB RAM footprint of the Jina ONNX model |
 | `GOOGLE_API_KEY` | optional | For RAGAS evaluation only (Gemini as judge) |
 
 ---
@@ -427,7 +544,7 @@ The t3.micro's 1GB RAM is a real constraint. Several deliberate choices accommod
 1. **Pre-build ingestion** — vector store is built during `docker build`, not at runtime startup
 2. **Local embeddings** — avoids latency and cost of remote embedding APIs
 3. **Small embedding model** — `BAAI/bge-small-en-v1.5` is only ~80MB (vs 400MB+ for larger models)
-4. **retrieval_k=8** — keeps context window small enough for fast Groq inference
+4. **retrieval_k=20 (RRF candidate pool) → top-5 after reranking** — keeps the final LLM context window small for fast Groq inference while still feeding the reranker a rich candidate set
 5. **BM25 index is lazy** — built on first query, not at startup (saves RAM during cold start)
 6. **Container binds to 127.0.0.1** — no extra memory for public network stack; Nginx handles external traffic
 7. **Swap space (1GB)** — backstop for Docker builds that briefly exceed 1GB
@@ -437,16 +554,16 @@ The t3.micro's 1GB RAM is a real constraint. Several deliberate choices accommod
 ## Known Limitations & Future Improvements
 
 ### Current Limitations
-- **RAGAS scores bounded by Llama 3.1 8B** — Faithfulness around 0.5 is the ceiling for this model size on a knowledge-heavy task. A stronger model (GPT-4, Claude) would score significantly higher with the same retrieval.
+- **Historical RAGAS ceiling at Faithfulness ≈ 0.5** — measured while the chatbot was still running on Llama 3.1 8B (before the upgrade to the current Llama 3.3 70B primary). The 8B model size was the bottleneck on this knowledge-heavy task; a fresh RAGAS pass against the 70B primary is pending. A stronger judge (GPT-4, Claude) over the same retrieval would also raise the ceiling.
 - **No query expansion** — Tried LLM-based query expansion but it hurt precision more than it helped recall. Removed.
 - **BM25 index rebuilt on restart** — Lazy initialization means the first query after container start is slower. Could be pre-built at startup if memory allowed.
 - **No conversation history limit** — long conversations could exceed the LLM's context window. Need sliding window or summarization.
 - **Thesis PDF (~3MB, 85 pages) excluded** — too large to ingest on t3.micro. Key content was extracted into `knowledge_base.md` as markdown summaries instead.
 
 ### Future Improvements
-- **Cross-encoder reranking** — retrieve 20 chunks, rerank to top 8 with a small cross-encoder model (memory-permitting)
+- **Re-enable cross-encoder reranking in production** — the reranker is already implemented (`jinaai/jina-reranker-v2-base-multilingual`, see "Cross-Encoder Reranker & Confidence Gate" above) but is feature-flagged off on t3.micro due to its ~350 MB RAM footprint. Upgrading to t3.small and flipping `RAG_RERANK_ENABLED=true` re-activates it — no code change
 - **Conversation summarization** — summarize old turns instead of truncating
-- **Upgrade to t3.small (2GB)** — would allow larger embedding models, more chunks, and cross-encoder reranking
+- **Upgrade to t3.small (2GB)** — would re-enable the reranker and allow larger embedding models
 - **Structured output** — use LangChain's structured output for responses with cited source IDs per claim
 - **A/B testing infrastructure** — to measure the impact of prompt/retrieval changes on real users
 
@@ -479,7 +596,13 @@ A: Tried chunk_size=800 but it actually hurt RAGAS scores during evaluation. Wit
 A: BAAI/bge-small-en-v1.5 runs locally via fastembed. It's a ~80MB model that produces 384-dimensional vectors with ~1ms latency per embedding. Compared to OpenAI's ada-002: zero API cost, much faster (no network round-trip), works offline, and sufficient quality for the 500-char chunks being embedded. The slight quality gap vs ada-002 is negligible for this size of knowledge base.
 
 **Q: Why Groq specifically?**
-A: Inference latency. Groq's LPU architecture gets Llama 3.1 8B responses back fast enough for streaming to feel instant. Free tier is generous (6000 tokens per minute). For a recruiter-facing chatbot, response speed matters — slow responses kill engagement.
+A: Inference latency. Groq's LPU hardware runs Llama 3.3 70B at 500+ tokens/sec (vs GPT-4's ~50), fast enough for streaming to feel instant. Free tier is generous for portfolio traffic. Automatic fallback to Llama 3.1 8B on 429 errors keeps the chat responsive under rate-limit pressure. For a recruiter-facing chatbot, response speed matters — slow responses kill engagement.
+
+**Q: How many chunks are retrieved per query? Wie viele Chunks werden retrievt?**
+A: **20 candidates from RRF, then cut to 5 after the cross-encoder reranker.** Specifically: each of the two searches (semantic via ChromaDB, keyword via BM25) returns `k*2 = 40` raw candidates. Reciprocal Rank Fusion merges them into a ranked top-`retrieval_k = 20` candidate pool. The cross-encoder reranker (when `RAG_RERANK_ENABLED=true`) scores each (query, chunk) pair jointly and narrows to `rag_rerank_top_k = 5` chunks — that top-5 is what the LLM actually sees. When the reranker is off in production (current state on t3.micro), the first 5 of the RRF top-20 are passed through as-is.
+
+**Q: Which LLM / language model does this chatbot use for answer generation?**
+A: The **primary LLM is `llama-3.3-70b-versatile`** via Groq, with `temperature=0` for deterministic output. When Groq returns a 429 rate-limit error, the `generate_answer_node` automatically falls back to `llama-3.1-8b-instant`. The same 8B model also runs the separate follow-up-question generation call (best-effort, fails silently). The 70B handles all user-facing answers by default; the 8B is a safety net, not the primary. (Note: the chatbot was originally built on 8B-only; it was later upgraded to the 70B primary + 8B fallback layered setup.)
 
 **Q: How does streaming work?**
 A: Server-Sent Events (SSE). The backend uses an async generator in FastAPI's StreamingResponse. It first yields the sources as JSON, then streams LLM tokens one at a time as they come back from `chain.astream()`, and finally yields a `[DONE]` marker. The frontend consumes this with Fetch API's ReadableStream and re-renders markdown incrementally as tokens arrive — creating a ChatGPT-like effect.
@@ -521,7 +644,7 @@ A: 1GB RAM is the main bottleneck. Had to optimize: pre-build ingestion instead 
 A: 11 Pytest tests across `test_health.py` (3 tests), `test_query.py` (5 tests), and `test_upload.py` (3 tests). They cover the health endpoint, query endpoint with and without history, streaming endpoint, and PDF upload with validation. GitHub Actions CI runs them on every push.
 
 **Q: What was the hardest part of building this?**
-A: Fitting the RAG pipeline into 1GB RAM. Every attempt to make it "better" (larger embeddings, bigger chunks, more retrieved chunks, thesis PDF ingestion) hit OOM errors on the t3.micro. Had to learn when "enough" is actually enough. The final config (500-char chunks, small embeddings, k=8, pre-build ingestion) is the sweet spot between quality and what the hardware can actually run.
+A: Fitting the RAG pipeline into 1GB RAM. Every attempt to make it "better" (larger embeddings, bigger chunks, more retrieved chunks, thesis PDF ingestion) hit OOM errors on the t3.micro. Had to learn when "enough" is actually enough. The final config (500-char chunks, small embeddings, RRF candidate pool of 20 cut to top-5 after rerank, pre-build ingestion) is the sweet spot between quality and what the hardware can actually run.
 
 **Q: What would you do differently next time?**
 A: (1) Start with a bigger instance for development and only optimize down at the end. (2) Skip query expansion — tried it, added latency without helping scores. (3) Write evaluation tests (RAGAS) from day one instead of as an afterthought. (4) Plan the knowledge base structure before writing it — section sizes and titles directly affect retrieval quality.
