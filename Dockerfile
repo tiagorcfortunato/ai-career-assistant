@@ -18,8 +18,8 @@ COPY data/odys_knowledge.md ./data/odys_knowledge.md
 COPY data/rag_chatbot_knowledge.md ./data/rag_chatbot_knowledge.md
 COPY data/inspection_api_knowledge.md ./data/inspection_api_knowledge.md
 
-# Ingestion happens at runtime startup (not build time) — pre-ingesting 4 KBs
-# exceeds t3.micro's 1GB RAM during docker build. Runtime has swap to fall back on.
+# Ingestion happens at runtime startup, not build time. This keeps the Docker
+# image simple and lets Render build the image without a large ChromaDB layer.
 
 RUN mkdir -p chroma_db
 

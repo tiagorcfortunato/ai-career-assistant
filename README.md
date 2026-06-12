@@ -4,7 +4,7 @@
 
 A production-deployed **Retrieval-Augmented Generation (RAG)** career chatbot. Recruiters and hiring managers can ask natural-language questions about Tiago Fortunato's experience, projects, and skills, and receive accurate, sourced answers in real time with streaming responses.
 
-> **Live demo:** [https://chatbot.tifortunato.com](https://chatbot.tifortunato.com)
+> **Live demo:** [rag-pdf-chatbot-0w9z.onrender.com](https://rag-pdf-chatbot-0w9z.onrender.com). The previous `chatbot.tifortunato.com` AWS deployment was intentionally shut down to avoid surprise billing.
 
 ---
 
@@ -12,16 +12,15 @@ A production-deployed **Retrieval-Augmented Generation (RAG)** career chatbot. R
 
 - **LangGraph orchestration** — query pipeline modelled as a typed `StateGraph` with conditional edges; streaming comes for free via `astream_events`
 - **Hybrid retrieval** — combines semantic search (ChromaDB embeddings) with keyword search (BM25), fused via Reciprocal Rank Fusion (RRF) for best-of-both-worlds matching
-- **Cross-encoder reranking with confidence gate** — `jinaai/jina-reranker-v2-base-multilingual` jointly scores `(query, chunk)` pairs; sigmoid-normalised score feeds a `max_score < 0.3 → fallback` gate. Feature-flagged (disabled in prod on t3.micro due to RAM budget; code tested end-to-end)
+- **Cross-encoder reranking with confidence gate** — `jinaai/jina-reranker-v2-base-multilingual` jointly scores `(query, chunk)` pairs; sigmoid-normalised score feeds a `max_score < 0.3 → fallback` gate. Feature-flagged (disabled on Render Free due to RAM budget; code tested end-to-end)
 - **Streaming SSE responses** — token-by-token output via Server-Sent Events for a ChatGPT-like experience
 - **Section-aware chunking** — for PDFs, detects headings by font-size analysis (PyMuPDF); for Markdown, splits by ATX headings
 - **Conversation history** — follow-up questions resolve references via short-query history enrichment
 - **Source attribution** — every answer shows which sections informed the response
 - **Layered LLM** — Llama 3.3 70B primary via Groq, Llama 3.1 8B fallback on rate-limits (auto-recovery inside the graph node)
 - **RAGAS evaluation pipeline** — automated quality metrics (faithfulness, relevancy, context precision/recall) using Gemini as judge
-- **CD pipeline** — push-to-main triggers GitHub Actions → GHCR image build → SSH deploy to EC2 with readiness-gated healthcheck + smoke test + auto-rollback on failure
-- **Persistent host volumes** — ChromaDB index and fastembed model cache live on the EC2 host, survive container replacement, keep deploys ~5s instead of re-ingesting every time
-- **Production deployment** — AWS EC2 + Docker + Nginx + Let's Encrypt HTTPS + custom domain
+- **Cost-controlled deployment** — Render Free + Docker + managed HTTPS; reranker disabled in production to stay inside the 512MB memory limit
+- **AWS infrastructure learning pass** — previously deployed manually on EC2 with Docker, Nginx, Let's Encrypt, DNS, and custom domain, then decommissioned to avoid billing risk
 
 ---
 
@@ -34,7 +33,7 @@ Section-aware chunking (ATX headings)
     ↓
 Local embeddings (BAAI/bge-small-en-v1.5 via fastembed, ONNX)
     ↓
-ChromaDB (persistent, mounted from host volume into the container)
+ChromaDB (local vector store inside the container/runtime path)
 
 ─────────────────────────────────────────
 
@@ -50,7 +49,7 @@ LangGraph StateGraph:
                            Reciprocal Rank Fusion → top-20 candidates
   4. rerank             ── Jina cross-encoder v2 multilingual
                            scores (query, chunk) jointly → top-5
-                           (feature-flagged; skipped in prod on t3.micro)
+                           (feature-flagged; skipped on Render Free)
   5. evaluate_retrieval ── max_rerank_score ≥ 0.3 → high, else low
        ↓
    ┌── confidence ──┐
@@ -78,14 +77,14 @@ Streaming SSE tokens emitted from generate_answer → frontend via astream_event
 | **LLM — fallback** | Llama 3.1 8B Instant (auto on 429 rate-limit; also powers follow-up-question generation) |
 | **Embeddings** | `BAAI/bge-small-en-v1.5` via `fastembed` (ONNX, runs locally) |
 | **Reranker** | `jinaai/jina-reranker-v2-base-multilingual` via `fastembed` (ONNX, feature-flagged) |
-| **Vector DB** | ChromaDB (persistent, host-volume mounted) |
+| **Vector DB** | ChromaDB |
 | **Keyword search** | BM25 via `rank_bm25` |
 | **Orchestration** | LangGraph `StateGraph` on top of LangChain primitives |
 | **Streaming** | Server-Sent Events (SSE) via `astream_events` |
 | **Frontend** | Vanilla HTML/CSS/JS + marked.js |
 | **Evaluation** | RAGAS with Gemini 2.5 Flash as judge |
-| **Deployment** | Docker, AWS EC2 (t3.micro), Nginx, Let's Encrypt |
-| **CD** | GitHub Actions → GHCR → EC2 pull (readiness-gated, auto-rollback) |
+| **Deployment** | Docker, Render Free |
+| **CD** | Render auto-deploy from GitHub `main` |
 
 ---
 
@@ -115,7 +114,22 @@ docker-compose up --build
 - **Chat UI:** `http://localhost:8000`
 - **API docs:** `http://localhost:8000/docs`
 
-The first build downloads the embedding model (~80MB) and pre-ingests the knowledge base. Subsequent starts are instant.
+The first build downloads the embedding model (~80MB). On startup, the app indexes the curated markdown knowledge base if needed.
+
+### Low-cost cloud deployment
+
+For portfolio use without AWS billing risk, deploy the Docker service to Render's free web service plan using `render.yaml`.
+
+Required environment variables:
+
+```bash
+GROQ_API_KEY=your_groq_key
+RAG_RERANK_ENABLED=false
+CHROMA_PATH=/tmp/chroma_db
+LLM_MODEL=llama-3.1-8b-instant
+```
+
+Do not add secrets to Git. Add `GROQ_API_KEY` only in the provider dashboard. Use the generated provider URL first; configure a custom domain only after the app is working.
 
 ---
 
@@ -192,11 +206,11 @@ app/
 └── main.py                    # FastAPI app + lifespan startup
 
 data/
-└── knowledge_base.md          # Career knowledge base (pre-ingested)
+└── knowledge_base.md          # Career knowledge base
 
 tests/                         # Pytest tests for upload, query, health
 eval_ragas.py                  # RAGAS evaluation pipeline
-Dockerfile                     # Pre-ingests KB at build time
+Dockerfile                     # Docker runtime for the FastAPI app
 ```
 
 ---
@@ -226,44 +240,49 @@ Gemini 2.5 Flash is used as the evaluator LLM (different from the chatbot's Groq
 | `GROQ_API_KEY` | required | Your Groq API key (free at console.groq.com) |
 | `LLM_MODEL` | `llama-3.3-70b-versatile` | Primary Groq model. 8B fallback is hard-coded in `retrieval.py` for 429 recovery + follow-up generation. |
 | `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Local embedding model (fastembed, ONNX) |
-| `CHROMA_PATH` | `./chroma_db` | ChromaDB persistence directory (container mounts a host volume here in prod) |
+| `CHROMA_PATH` | `./chroma_db` | ChromaDB persistence directory. On Render Free, use `/tmp/chroma_db`. |
 | `CHUNK_SIZE` | `500` | Max characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Overlap between chunks |
 | `RETRIEVAL_K` | `20` | RRF candidate pool size (reranker then narrows to `RAG_RERANK_TOP_K`) |
 | `RAG_RERANK_MODEL` | `jinaai/jina-reranker-v2-base-multilingual` | Cross-encoder checkpoint used when reranker is enabled |
 | `RAG_RERANK_TOP_K` | `5` | Post-rerank cut — how many chunks reach the LLM |
 | `RAG_RERANK_MIN_SCORE` | `0.3` | Sigmoid-normalised confidence-gate threshold |
-| `RAG_RERANK_ENABLED` | `true` (code) / `false` (prod) | Feature flag — off in prod on t3.micro due to 350 MB Jina ONNX footprint |
+| `RAG_RERANK_ENABLED` | `true` (code) / `false` (prod) | Feature flag — off on Render Free due to the 350 MB Jina ONNX footprint |
 | `GOOGLE_API_KEY` | optional | For RAGAS evaluation only (Gemini as judge) |
 
 ---
 
 ## Production deployment
 
-The live demo runs on AWS EC2 (t3.micro, eu-central-1, 1 GB RAM) behind Nginx with Let's Encrypt TLS on a custom Namecheap domain.
+The current live demo runs on Render Free as a Docker web service:
 
-### CD pipeline
+- URL: `https://rag-pdf-chatbot-0w9z.onrender.com`
+- Region: Frankfurt
+- Plan: Free, 512MB RAM
+- HTTPS: managed by Render
+- Known tradeoff: cold start after inactivity
 
-Push to `main` → GitHub Actions runs three jobs:
+The previous AWS EC2 deployment was built as an infrastructure learning pass and then intentionally decommissioned to avoid surprise billing.
 
-1. **`test`** — pytest on the runner
-2. **`build-and-push`** — Docker image built off-box on the GH runner (4 GB RAM, avoids t3.micro OOM), pushed to GHCR as `ghcr.io/<owner>/<repo>:sha-<short>`
-3. **`deploy`** — SSH to EC2, `docker pull` the pre-built image, stop old container, start new one with host-volume mounts + `--memory=800m`. Poll `/health` up to 120 s, then a live `POST /api/query` smoke test. Any failure → auto-rollback to the previous image by SHA. See `DEPLOYMENT.md` for the full runbook.
+### Render deployment
 
-### Host volumes (survive deploys)
+Push to `main` → Render builds and runs the Docker service.
 
-- `chroma_db` → `/app/chroma_db` (~3 MB, pre-ingested via the separate `bootstrap-chroma.yml` workflow)
-- fastembed model cache → `/root/.cache/fastembed` (embedder + reranker ONNX weights; lazy-downloads on miss)
+Required environment variables:
 
-The result: normal deploys are ~5 s container swaps, not re-ingestion runs. The bootstrap workflow only re-runs when a knowledge-base markdown file changes.
+```bash
+GROQ_API_KEY=your_groq_key
+RAG_RERANK_ENABLED=false
+CHROMA_PATH=/tmp/chroma_db
+LLM_MODEL=llama-3.1-8b-instant
+```
+
+`RAG_RERANK_ENABLED=false` is important on the free instance. The reranker is implemented and tested, but loading the Jina ONNX model can push the service over Render's 512MB limit.
 
 ### Readiness semantics
 
-`/health` returns 503 during lifespan startup (ingestion check + warmup), 200 once ready. The deploy workflow polls for 200 before calling the smoke test — no more racing against a not-yet-ready container.
+`/health` returns 503 during lifespan startup, then 200 once the app is ready. Render uses this path to verify the service.
 
-### Runtime hardening
+### Previous AWS learning deployment
 
-- `--restart unless-stopped` for crash recovery
-- `--memory=800m --memory-swap=1600m` to bound the container below the host budget
-- `127.0.0.1:8000` bind — Nginx is the only public surface
-- Let's Encrypt auto-renewal via cron
+The project was also deployed manually on AWS EC2 with Docker, Nginx, Let's Encrypt, DNS, and a custom domain. That setup proved production infrastructure skills, but it is not the current live deployment because the goal now is a zero-surprise-cost portfolio demo.

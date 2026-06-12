@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ai-career-assistant
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: llama-3.1-8b-instant
+      - key: CHROMA_PATH
+        value: /tmp/chroma_db
+      - key: RAG_RERANK_ENABLED
+        value: false

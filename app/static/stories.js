@@ -215,7 +215,7 @@ const STORIES = {
   "chatbot": {
     title: "How this chatbot was built",
     emoji: "🤖",
-    liveUrl: "https://chatbot.tifortunato.com",
+    liveUrl: "https://rag-pdf-chatbot-0w9z.onrender.com",
     steps: [
       {
         title: "1. The starting point — generic PDF chatbot",
@@ -236,22 +236,22 @@ const STORIES = {
         learnMore: "How is the career knowledge base structured for optimal retrieval?",
       },
       {
-        title: "3. The first deploy (Render)",
+        title: "3. The cost-controlled deploy (Render)",
         content:
-          "The chatbot first went live on **Render's free tier**. Fast to set up, free, worked.\n\nBut two problems emerged:\n\n1. **Cold starts** — Render's free tier spins down after 15 minutes of inactivity. First visitor gets a 50-second cold start, which kills engagement.\n2. **I wanted AWS experience on my portfolio** — Render is a managed service hiding the complexity. For a learning project, that's the opposite of what I wanted.",
+          "The current public version runs on **Render's free tier** as a Docker web service. That keeps the project online without AWS billing risk.\n\nThe tradeoff is clear:\n\n1. **Cold starts** — after inactivity, the first request can take around 50 seconds.\n2. **Tight memory** — the free instance has 512MB RAM, so the app disables heavier reranking in production.",
         deepDive:
-          "The cold-start problem is subtle. It's not 'sometimes slow' — it's 'the literal first impression for a brand new recruiter is a 50-second blank page', because the very first visit of the day triggers the cold start. The people who matter most to the product (first-time visitors) get the worst experience by design.\n\nI tried a band-aid first: a `keep_alive` background task inside the app that pings `/health` every 10 minutes. That prevents the spin-down as long as the container is running. But it's fragile — if Render restarts the container for any reason, the keep-alive restarts too, and the next visitor still hits a cold start. Also, it violates the free tier's implicit contract (it's supposed to spin down), which is uncomfortable.\n\nMoving to a box I own (EC2) fixed both issues — always on, and I learned real infrastructure work along the way.",
-        learnMore: "Why did Tiago migrate the chatbot from Render to AWS EC2?",
+          "This was a pragmatic deployment decision. The app is useful as a portfolio proof point, but it does not need a paid always-on server before it has real traffic. Render gives a public HTTPS URL, automatic Docker deploys, and a clear free-tier constraint.\n\nTo fit inside that constraint, production sets `RAG_RERANK_ENABLED=false`. The heavier Jina cross-encoder reranker remains implemented and tested, but it is not loaded on the free instance. The pipeline still uses hybrid retrieval — semantic search plus BM25 fused with Reciprocal Rank Fusion — and Groq handles the actual LLM generation outside the Render container.",
+        learnMore: "How is the chatbot deployed on Render without AWS billing risk?",
       },
       {
-        title: "4. The AWS migration",
+        title: "4. The AWS learning pass",
         content:
-          "I moved the chatbot to **AWS EC2** (`t3.micro`). This meant setting up all the pieces manually:\n\n- **Docker** container with `--restart unless-stopped`\n- **Nginx reverse proxy** on 80/443\n- **Let's Encrypt SSL** with auto-renewal cron\n- **Custom domain** (`chatbot.tifortunato.com`) via Namecheap DNS\n- **Elastic IP** so the address doesn't change on restart\n\nAll manual. No managed service hiding the complexity. The point was learning production infrastructure.",
+          "I also deployed the chatbot manually on **AWS EC2** (`t3.micro`) as a learning pass. That meant setting up:\n\n- **Docker** container runtime\n- **Nginx reverse proxy** on 80/443\n- **Let's Encrypt SSL**\n- **Custom domain** (`chatbot.tifortunato.com`) via Namecheap DNS\n- **Elastic IP** so the address would not change on restart\n\nAfter proving the setup, I shut AWS down intentionally to avoid surprise billing. The current live demo is the Render deployment.",
         code:
           "# /etc/nginx/conf.d/chatbot.conf\nserver {\n  listen 443 ssl;\n  server_name chatbot.tifortunato.com;\n  ssl_certificate /etc/letsencrypt/live/chatbot.tifortunato.com/fullchain.pem;\n  ssl_certificate_key /etc/letsencrypt/live/chatbot.tifortunato.com/privkey.pem;\n\n  location / {\n    proxy_pass http://127.0.0.1:8000;\n    proxy_http_version 1.1;\n    proxy_buffering off;            # critical for SSE streaming\n    proxy_cache off;\n    proxy_set_header Connection '';\n    proxy_set_header Host $host;\n  }\n}",
         deepDive:
-          "`proxy_buffering off` is the single most important line. By default, Nginx buffers the entire response before sending it to the client — which completely defeats Server-Sent Events (SSE) for streaming tokens. The user would see nothing for 10 seconds, then get the whole answer at once.\n\nWith buffering off, Nginx passes each SSE chunk through immediately. The `proxy_http_version 1.1` and empty `Connection` header are also needed to keep the connection alive for streaming (HTTP/1.0 would close after the first response).\n\nThe rest of the setup is standard production hygiene: container binds to `127.0.0.1` (localhost only) so Nginx is the only public-facing surface, Let's Encrypt via `certbot --nginx` handles the HTTPS block and the redirect, and a cron entry runs `certbot renew` daily to keep the cert fresh. The Elastic IP means the DNS never has to change.",
-        learnMore: "How is the chatbot deployed on AWS EC2 with Docker, Nginx, and HTTPS?",
+          "`proxy_buffering off` is the key learning from the AWS setup. By default, Nginx can buffer responses, which defeats Server-Sent Events (SSE) because the browser receives the answer only after the server finishes. With buffering off, each token flushes through immediately.\n\nThat AWS setup was valuable because it exposed the parts managed platforms hide: TLS, DNS, reverse proxy behavior, container restart policy, and memory limits. But for the current business goal — showing a working project without risking unexpected bills — Render Free is the better deployment target.",
+        learnMore: "What did Tiago learn from deploying the chatbot on AWS EC2?",
       },
       {
         title: "5. The retrieval problem — hybrid search",
@@ -276,12 +276,12 @@ const STORIES = {
       {
         title: "7. The memory problem",
         content:
-          "The `t3.micro` has only **1GB of RAM**. Every attempt to make the chatbot 'better' — larger embeddings, more chunks, ingesting the 3MB thesis PDF, bigger context windows — hit OOM errors during Docker build.\n\nThe solution was a combination of three tactics:\n\n1. **Pre-ingest at Docker build time** — the vector store is baked into the image\n2. **Add 1GB of swap space** on the host\n3. **Mount ChromaDB as a persistent volume** — container restarts don't re-ingest",
+          "The current public demo runs on **Render Free**, which means a tight **512MB RAM** budget. Every attempt to make the chatbot heavier — larger embeddings, always-on reranking, bigger knowledge files, more context — can push the service toward OOM.\n\nThe solution is deliberately pragmatic:\n\n1. **Curated Markdown knowledge bases** instead of large raw PDFs\n2. **Small local embeddings** via fastembed\n3. **Cross-encoder reranker disabled in production** with `RAG_RERANK_ENABLED=false`\n4. **Accept cold starts** instead of paying for always-on hosting before there is traffic",
         code:
-          "# Dockerfile — pre-ingest so runtime startup is cheap\nCOPY data/knowledge_base.md ./data/knowledge_base.md\nCOPY data/odys_knowledge.md ./data/odys_knowledge.md\nCOPY data/inspection_api_knowledge.md ./data/inspection_api_knowledge.md\nCOPY data/rag_chatbot_knowledge.md ./data/rag_chatbot_knowledge.md\n\n# Bake the vector store into the image at build time\nRUN python -m app.scripts.ingest_all\n\n# On the host: persistent volume so restarts skip re-ingest\n# sudo docker run -v ~/chatbot-chroma:/app/chroma_db career-chatbot",
+          "# Render environment\nRAG_RERANK_ENABLED=false\nCHROMA_PATH=/tmp/chroma_db\nLLM_MODEL=llama-3.1-8b-instant\n\n# app/main.py — startup indexes KBs only if Chroma is empty\n_ensure_ingested(KNOWLEDGE_BASE_PATH, 'Base')\n_ensure_ingested(ODYS_KNOWLEDGE_PATH, 'Odys')\n_ensure_ingested(RAG_KNOWLEDGE_PATH, 'RAG')\n_ensure_ingested(INSPECTION_KNOWLEDGE_PATH, 'Inspection API')",
         deepDive:
-          "The memory arithmetic is tight. FastEmbed alone is ~250MB resident. ChromaDB adds another ~100MB. FastAPI + uvicorn is ~80MB. The Python interpreter + loaded packages is ~120MB. That's ~550MB baseline with no traffic. The other ~400MB of the 1GB is the buffer for actually serving requests and holding context for the LLM call.\n\nIngesting 500+ chunks at startup pushes memory past the limit because the embedding model has to hold the full batch in memory as it embeds. That's what was causing OOM kills during Docker build. Pre-ingesting works because the build environment (with swap on) can absorb the spike, and runtime only needs to read the pre-built SQLite file (which is fast and memory-light).\n\nSwap space is the safety net for the edge cases: a fallback query with unusually large context, a burst of concurrent requests, etc. It's slow (swap IO thrashes), but slow-and-alive beats fast-and-OOM-killed.",
-        learnMore: "How does the chatbot run on a 1GB t3.micro without OOM errors?",
+          "This is a business decision as much as a technical one. A paid always-on server would remove cold starts and allow the reranker, but it would also create recurring cost before the portfolio has measurable demand.\n\nSo the current production target is intentionally constrained: keep the demo available, keep the architecture real, and avoid billing surprises. The tradeoff is that the first visitor after inactivity may wait while Render wakes the service and loads the embedding/vector-store stack.\n\nThe code still contains the full reranker implementation and tests. Upgrading later is an environment change, not a rewrite: move to a larger instance and set `RAG_RERANK_ENABLED=true`.",
+        learnMore: "How does the chatbot stay within Render's memory limit?",
       },
       {
         title: "8. The model upgrade — with fallback",

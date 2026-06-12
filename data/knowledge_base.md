@@ -10,7 +10,7 @@
 Tiago Fortunato is a Product Engineer and Founder based in Berlin, Germany. He has an MSc in Software Engineering from the University of Europe for Applied Sciences (2026) and a BSc in Mechanical Engineering from UERJ in Brazil. He is the sole founder and developer of Odys, a live SaaS product. He focuses on AI-powered applications and ships products end-to-end as a single person, using AI tools (Claude Code) as a core part of his workflow. He is open to Product Engineer, AI Engineer, Solutions Engineer, or Founding Engineer roles in Berlin or remote, and is looking for EU Blue Card sponsorship.
 
 ### Tiago's Projects Summary
-Tiago has built three main projects: (1) [RAG Career Chatbot](https://github.com/tiagorcfortunato/ai-career-assistant) — a production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application with streaming SSE, LangChain, ChromaDB, Groq, deployed on AWS EC2 with Docker, Nginx, and HTTPS. (2) [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) — a production-grade REST API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT authentication, admin roles, and 31 Pytest integration tests running against real PostgreSQL in GitHub Actions CI. (3) [Odys](https://odys.com.br) — a WhatsApp-first scheduling SaaS built entirely solo for Brazilian freelance professionals, with Stripe payments, self-hosted Evolution API for WhatsApp reminders, multi-tenant architecture, and Supabase pg_cron.
+Tiago has built three main projects: (1) [RAG Career Chatbot](https://github.com/tiagorcfortunato/ai-career-assistant) — a production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application with streaming SSE, LangGraph/LangChain, ChromaDB, Groq, and Docker, currently deployed on Render Free. (2) [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) — a production-grade REST API with AI-powered damage classification using Groq Llama 3.2 11B Vision, JWT authentication, admin roles, and 31 Pytest integration tests running against real PostgreSQL in GitHub Actions CI. (3) [Odys](https://odys.com.br) — a WhatsApp-first scheduling SaaS built entirely solo for Brazilian freelance professionals, with Stripe payments, self-hosted Evolution API for WhatsApp reminders, multi-tenant architecture, and Supabase pg_cron.
 
 ### Tiago's Full Tech Stack
 Backend: Python, FastAPI, PostgreSQL, SQLAlchemy, Drizzle ORM, Pydantic, Alembic, JWT (python-jose + bcrypt), Pytest. AI & Machine Learning: RAG (Retrieval-Augmented Generation), LangChain, ChromaDB, Vector Search, fastembed (BAAI/bge-small-en-v1.5), Groq API (Llama 3.1 8B), YOLOv8 (Ultralytics), PyTorch, Scikit-learn, Pandas, PyMuPDF (fitz), Claude Code. Full-Stack & SaaS: TypeScript, Next.js 16 (App Router), Supabase, Stripe, Resend, Upstash Redis, Evolution API v2, Tailwind CSS + shadcn/ui. DevOps & Infrastructure: Docker, GitHub Actions CI/CD, Vercel, Railway, Render, AWS EC2, Nginx, Let's Encrypt, Git.
@@ -44,7 +44,7 @@ His focus is **AI-powered applications**: RAG pipelines, LLM integrations, multi
 - Email: tifortunato.eng@gmail.com
 - Phone: +49 172 238 9909
 - Portfolio: [tifortunato.com](https://tifortunato.com)
-- Career chatbot: [chatbot.tifortunato.com](https://chatbot.tifortunato.com)
+- Career chatbot: [rag-pdf-chatbot-0w9z.onrender.com](https://rag-pdf-chatbot-0w9z.onrender.com)
 - GitHub: [github.com/tiagorcfortunato](https://github.com/tiagorcfortunato)
 - LinkedIn: [linkedin.com/in/tiagorcfortunato](https://linkedin.com/in/tiagorcfortunato)
 
@@ -132,7 +132,7 @@ Tiago has built three main projects: (1) RAG Career Chatbot — AI career assist
 ### 1. [RAG Career Chatbot](https://github.com/tiagorcfortunato/ai-career-assistant) (2026)
 
 **Repository:** [github.com/tiagorcfortunato/ai-career-assistant](https://github.com/tiagorcfortunato/ai-career-assistant)
-**Live Demo:** [chatbot.tifortunato.com](https://chatbot.tifortunato.com)
+**Live Demo:** [rag-pdf-chatbot-0w9z.onrender.com](https://rag-pdf-chatbot-0w9z.onrender.com)
 
 A production-deployed AI Career Assistant built as a Retrieval-Augmented Generation (RAG) application. It serves as Tiago's interactive professional profile — recruiters and hiring managers can ask natural-language questions about his experience, projects, skills, and motivations, and receive accurate, sourced answers in real time with streaming responses.
 
@@ -143,7 +143,7 @@ Originally built as a general-purpose PDF chatbot, Tiago evolved it into a caree
 ```
 Knowledge base (Markdown) → section-aware chunking → fastembed (BAAI/bge-small-en-v1.5, local)
     ↓
-ChromaDB (persistent vector store, pre-ingested at Docker build time)
+ChromaDB (local vector store, indexed from curated Markdown knowledge bases)
 
 ──────────────────────────────────────
 
@@ -163,12 +163,12 @@ Frontend: real-time markdown rendering + source attribution
 #### Key Technical Details
 
 - **Streaming SSE responses:** Backend yields Server-Sent Events via `POST /api/query/stream`. Frontend consumes the stream with Fetch API ReadableStream, rendering markdown incrementally as tokens arrive. Feels like ChatGPT — text appears word by word.
-- **Pre-build Docker ingestion:** The knowledge base is embedded and indexed at Docker build time (`RUN python -c "ingest_markdown(...)"`), not at runtime. This avoids the memory spike from loading fastembed + ChromaDB + ingesting 100+ chunks simultaneously — critical for fitting within Render's 512MB free tier.
+- **Memory-conscious startup:** The current Render deployment ingests a curated markdown knowledge base at startup and keeps the heavier cross-encoder reranker disabled in production (`RAG_RERANK_ENABLED=false`). This keeps the Docker service viable on Render Free's 512MB limit.
 - **Section-aware chunking:** For PDFs, uses PyMuPDF to extract font sizes across all spans, computes median font size, flags text 15%+ larger as headings. For Markdown, splits by ATX headings. Keeps small sections whole; uses `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) only for large sections. Each sub-chunk is prefixed with its section title for retrieval coherence.
 - **History-enriched retrieval:** Enriches search queries with the last 2 conversation exchanges, enabling natural follow-up questions ("tell me more about the first one").
 - **Suggested question chips:** Interactive clickable questions shown after each response. Tracks which questions have been asked and shows only remaining suggestions — guides the conversation naturally without requiring the user to think of questions.
 - **Markdown rendering:** Uses marked.js to render tables, bullet points, code blocks, bold text, and headers within chat bubbles.
-- **Keep-alive mechanism:** Background async task pings `/health` every 10 minutes to prevent Render free tier spin-down (which otherwise adds 50+ seconds cold start delay).
+- **Free-tier tradeoff:** Render Free can spin down after inactivity, so the first request may take around 50 seconds. Tiago accepts this for a cost-controlled portfolio deployment instead of keeping an AWS server running.
 - **Source attribution:** Every answer shows the knowledge base sections that were retrieved, so users can see which parts of Tiago's profile informed the response.
 - **Recruiter persona system prompt:** Configured as a Professional Talent Assistant with instructions to answer from context, never hallucinate, and always try to give thorough answers from available information.
 - **REST API:** Full OpenAPI/Swagger docs at `/docs`. Both non-streaming (`POST /api/query`) and streaming (`POST /api/query/stream`) endpoints available.
@@ -199,11 +199,11 @@ Frontend: real-time markdown rendering + source attribution
 - **Challenge:** Free embedding APIs add latency and cost at scale.
   **Solution:** Runs BAAI/bge-small-en-v1.5 locally via fastembed — downloaded once (~80MB), zero API cost.
 
-- **Challenge:** Render free tier has only 512MB RAM; loading fastembed + ChromaDB + ingesting 100+ chunks at startup causes OOM crash.
-  **Solution:** Pre-ingest the knowledge base during Docker build. The vector store is baked into the image — runtime startup only loads FastAPI + reads the pre-built ChromaDB, fitting comfortably in 512MB.
+- **Challenge:** Render Free has only 512MB RAM; loading embeddings, ChromaDB, and a cross-encoder reranker together can cause OOM.
+  **Solution:** Use a small local embedding model, curated markdown knowledge bases, limited retrieval size, and `RAG_RERANK_ENABLED=false` in production.
 
 - **Challenge:** Render free tier spins down after inactivity, causing 50+ second cold starts.
-  **Solution:** Background async keep-alive task pings the health endpoint every 10 minutes.
+  **Solution:** Accept the cold start for now to avoid AWS billing risk; upgrade only if the project starts receiving meaningful traffic.
 
 ---
 
@@ -549,7 +549,7 @@ Distributed systems at scale. He's built reliable systems for current load level
 
 ### [RAG Chatbot](https://github.com/tiagorcfortunato/ai-career-assistant) — Key Technical Decisions
 
-The RAG Chatbot uses hybrid search combining semantic similarity (ChromaDB) with keyword matching (BM25), fused using Reciprocal Rank Fusion. Section-aware chunking analyzes font sizes via PyMuPDF to detect headings (15% larger than median = heading), preserving document structure. Responses stream token-by-token via Server-Sent Events (SSE). Knowledge base is pre-ingested at Docker build time to avoid runtime memory spikes. See full source code: [retrieval.py](https://github.com/tiagorcfortunato/ai-career-assistant/blob/feature/recruiter-persona/app/services/retrieval.py), [ingestion.py](https://github.com/tiagorcfortunato/ai-career-assistant/blob/feature/recruiter-persona/app/services/ingestion.py).
+The RAG Chatbot uses hybrid search combining semantic similarity (ChromaDB) with keyword matching (BM25), fused using Reciprocal Rank Fusion. Section-aware chunking analyzes font sizes via PyMuPDF to detect headings (15% larger than median = heading), preserving document structure. Responses stream token-by-token via Server-Sent Events (SSE). The current Render deployment indexes curated Markdown knowledge bases at startup and disables the heavier reranker in production to stay within the free-tier memory limit. See full source code: [retrieval.py](https://github.com/tiagorcfortunato/ai-career-assistant/blob/feature/recruiter-persona/app/services/retrieval.py), [ingestion.py](https://github.com/tiagorcfortunato/ai-career-assistant/blob/feature/recruiter-persona/app/services/ingestion.py).
 
 ### [Inspection Management API](https://github.com/tiagorcfortunato/inspection-management-api) — Key Technical Decisions
 
@@ -571,7 +571,7 @@ Tiago deploys across multiple platforms, choosing each based on the use case:
 
 | Project | Platform | Why |
 |---|---|---|
-| RAG Chatbot | AWS EC2 (t3.micro) + Docker | Full control, always-on, custom domain with HTTPS |
+| RAG Chatbot | Render Free + Docker | Cost-controlled public demo with managed HTTPS |
 | Inspection API | Render (free tier) | Quick deploys, managed infrastructure |
 | Inspection Dashboard | Vercel | Static hosting, instant deploys |
 | Odys (app) | Vercel | Next.js optimized hosting |
@@ -580,13 +580,13 @@ Tiago deploys across multiple platforms, choosing each based on the use case:
 
 **Custom domain setup**: `tifortunato.com` (Namecheap) with subdomains:
 - `tifortunato.com` → Portfolio (Vercel)
-- `chatbot.tifortunato.com` → RAG Chatbot (AWS EC2)
+- `rag-pdf-chatbot-0w9z.onrender.com` → RAG Chatbot (Render Free)
 
-**AWS EC2 deployment includes:**
+**RAG chatbot deployment includes:**
 - Docker containerization
-- Nginx reverse proxy
-- Let's Encrypt SSL (auto-renewal via cron)
-- Pre-ingested knowledge base at Docker build time
+- Render managed HTTPS
+- Groq-hosted LLM inference
+- Memory-conscious configuration for the 512MB free instance
 
 ### CI/CD Pipelines
 

@@ -1,6 +1,6 @@
 # AI Career Assistant — RAG Chatbot Technical Deep Dive
 
-> Technical knowledge base for the RAG Career Chatbot, Tiago Fortunato's production-deployed AI application built as a Retrieval-Augmented Generation system. Live at [chatbot.tifortunato.com](https://chatbot.tifortunato.com). Repository: [github.com/tiagorcfortunato/ai-career-assistant](https://github.com/tiagorcfortunato/ai-career-assistant).
+> Technical knowledge base for the RAG Career Chatbot, Tiago Fortunato's production-deployed AI application built as a Retrieval-Augmented Generation system. Current live demo: [rag-pdf-chatbot-0w9z.onrender.com](https://rag-pdf-chatbot-0w9z.onrender.com). Repository: [github.com/tiagorcfortunato/ai-career-assistant](https://github.com/tiagorcfortunato/ai-career-assistant).
 
 ---
 
@@ -12,15 +12,15 @@ This is the making-of story for the AI Career Assistant. When someone asks "walk
 
 **The pivot.** The first big change was the knowledge base. Instead of ingesting random PDFs, Tiago wrote structured markdown files documenting his projects, background, and technical decisions. He also rewrote the system prompt with a Professional Talent Assistant persona focused on recruiters.
 
-**The first deploy (Render).** The chatbot went live on Render's free tier. Fast to set up, free, worked. But two problems: (1) Render spins down after 15 minutes of inactivity, meaning 50-second cold starts for the first visitor; (2) Tiago wanted to show AWS experience on his portfolio.
+**The first deploy (Render).** The chatbot went live on Render's free tier. Fast to set up, free, and enough for a portfolio product. The tradeoff is cold start: after inactivity, the first request can take around 50 seconds while the service spins up.
 
-**The AWS migration.** Tiago moved the chatbot to AWS EC2 (t3.micro). This meant setting up Docker, Nginx reverse proxy, Let's Encrypt SSL, custom domain (chatbot.tifortunato.com via Namecheap DNS), and an Elastic IP so the address wouldn't change on restart. All manual — no managed service hiding the complexity. This was deliberate: the point was to learn production infrastructure, not just to deploy.
+**The AWS experiment and current deployment decision.** Tiago later migrated the chatbot to AWS EC2 (t3.micro) to learn lower-level production infrastructure: Docker, Nginx reverse proxy, Let's Encrypt SSL, DNS, and custom domains. After proving that setup, he intentionally shut the AWS instance down to avoid surprise billing. The current public deployment is back on Render Free, using Docker and a cost-controlled configuration.
 
 **The retrieval problem.** Early answers were hit-or-miss. When asked "what's your tech stack?", the chatbot sometimes missed relevant chunks. The fix was hybrid search — combining semantic search (ChromaDB embeddings) with keyword search (BM25), fused via Reciprocal Rank Fusion. Semantic search alone missed exact terms like "FastAPI"; BM25 alone missed synonyms. Together, they cover both.
 
 **The cross-project confusion.** Once Tiago added separate knowledge base files for Odys, the Inspection API, and the RAG chatbot itself, a new problem emerged: the LLM would attribute Odys features to the RAG chatbot or vice versa because the retrieved chunks didn't tell it which project they belonged to. The fix was two-fold: (1) prefix each retrieved chunk with a `[SOURCE: PROJECT NAME]` label so the LLM sees explicit project boundaries; (2) add query routing — a keyword-based classifier that, when the question clearly targets one project, filters retrieval to only that project's chunks.
 
-**The memory problem.** The t3.micro has only 1GB RAM. Every attempt to make the chatbot "better" (larger embeddings, more chunks, ingesting a 3MB thesis PDF) hit OOM errors during Docker build. The solution was a combination of: pre-ingesting the knowledge base at Docker build time (so runtime startup was cheap), adding 1GB of swap space, and mounting ChromaDB as a persistent volume so container restarts don't re-ingest.
+**The memory problem.** Render Free has a 512MB RAM limit, and the AWS t3.micro has only 1GB RAM. Every attempt to make the chatbot "better" (larger embeddings, reranking always on, ingesting a 3MB thesis PDF) pushed memory too far. The current Render deployment keeps the app inside the free tier by using a small local embedding model, limiting retrieval size, and disabling the cross-encoder reranker in production with `RAG_RERANK_ENABLED=false`.
 
 **The model upgrade.** The chatbot started on Llama 3.1 8B — fast but a bit shallow. Tiago upgraded to Llama 3.3 70B (also free on Groq, just with tighter rate limits). Responses became noticeably richer. Then he added automatic model fallback: if the 70B hits its daily rate limit, the chatbot silently switches to 8B so users never see errors.
 
@@ -32,7 +32,7 @@ This is the making-of story for the AI Career Assistant. When someone asks "walk
 
 **The lesson.** The hardest part wasn't any single feature — it was learning when to stop adding features. Every improvement cycle had diminishing returns, and the RAGAS scores plateaued around 0.52 because Llama 8B hits a ceiling. Tiago learned to ship what works rather than chase scores, and to measure before optimizing. Most of the time he "improved" things without measuring, some of those changes hurt the scores.
 
-**The takeaway for a recruiter.** This project shows: end-to-end product thinking (not just training a model), infrastructure work (Docker, Nginx, SSL, DNS, AWS), retrieval engineering (hybrid search, query routing, chunking), production LLM orchestration (streaming, fallback, rate limits), systematic evaluation (RAGAS with a separate judge), and attention to UX (entry points, persistence, contextual follow-ups).
+**The takeaway for a recruiter.** This project shows: end-to-end product thinking (not just training a model), pragmatic deployment decisions (Docker, Render, AWS learning, cost control), retrieval engineering (hybrid search, query routing, chunking), production LLM orchestration (streaming, fallback, rate limits), systematic evaluation (RAGAS with a separate judge), and attention to UX (entry points, persistence, contextual follow-ups).
 
 ---
 
@@ -51,7 +51,7 @@ Originally built as a general-purpose PDF chatbot, Tiago evolved it into a caree
 - **~810** lines of application code (excluding frontend and tests)
 - **~630** lines in the vanilla HTML/CSS/JS chat UI (`app/static/index.html`)
 - **2** knowledge base files ingested (main + Odys deep-dive)
-- **Single Docker image** deployed on AWS EC2
+- **Single Docker image** deployed on Render Free
 
 ---
 
@@ -68,8 +68,7 @@ Originally built as a general-purpose PDF chatbot, Tiago evolved it into a caree
 - **marked.js** (frontend markdown rendering)
 - **Pydantic 2 + pydantic-settings 2.5** (config and validation)
 - **Pytest 8.3** + **httpx 0.27** (testing)
-- **Nginx 1.28** (reverse proxy on EC2)
-- **Let's Encrypt / Certbot** (SSL)
+- **Render managed HTTPS** for the current live deployment
 - **Docker** + **Docker Compose**
 
 ---
@@ -84,11 +83,11 @@ The chatbot embeds text using **`BAAI/bge-small-en-v1.5`**, executed via the **`
 - State-of-the-art in the small-model tier per the MTEB benchmark
 - Sufficient semantic expressiveness for 500-character chunks
 
-**Why not `bge-large`?** Would score 2-3 MTEB points higher but costs ~1.3 GB RAM to load. On a t3.micro (1 GB total RAM), this is OOM. Realistic only after instance upgrade.
+**Why not `bge-large`?** Would score 2-3 MTEB points higher but costs ~1.3 GB RAM to load. That does not fit a free 512MB Render instance and would force paid hosting before the project has real traffic.
 
 **Why fastembed over sentence-transformers?**
 1. **No PyTorch dependency.** sentence-transformers pulls torch + CUDA libs totalling 1-2 GB. fastembed uses the ONNX runtime, ~80 MB install footprint.
-2. **t3.micro-friendly.** ONNX runs on CPU with ~10-50 ms per embed latency. No GPU needed.
+2. **Free-tier-friendly.** ONNX runs on CPU with ~10-50 ms per embed latency. No GPU needed.
 3. **Cold-start behavior.** ONNX loads in ~200 ms; PyTorch models take significantly longer.
 
 **Integration.** `FastEmbeddings` in `app/services/embeddings.py` is a thin adapter that implements LangChain's `Embeddings` interface (`embed_documents`, `embed_query`). ChromaDB consumes it like any other LangChain-compatible embedder.
@@ -171,7 +170,7 @@ Local embeddings via fastembed (BAAI/bge-small-en-v1.5)
 ChromaDB (persistent storage at ./chroma_db)
 ```
 
-**Key design decision:** Ingestion happens at **Docker build time**, not runtime. The vector store is baked into the image. This avoids the memory spike of loading fastembed + ChromaDB + ingesting chunks all at once on startup — critical for fitting within the t3.micro's 1GB RAM.
+**Current ingestion decision:** The Render deployment ingests the curated Markdown knowledge bases during FastAPI startup if ChromaDB is empty. This keeps the Docker build simple, avoids committing generated vector-store files, and works because the production knowledge base is intentionally small. The heavier reranker is disabled in production to stay within Render Free's memory limit.
 
 ### Query Pipeline (Runtime)
 
@@ -235,7 +234,7 @@ The retrieval pipeline is orchestrated via a **LangGraph `StateGraph`** with a t
 1. `enrich_query_node` — prepends conversation history to short follow-up queries (<5 words + history exists)
 2. `route_query_node` — keyword-based project scoping (e.g. "odys" → `odys_knowledge.md` + `knowledge_base.md`)
 3. `retrieve_node` — hybrid search: Chroma semantic similarity (k*2) + BM25 keyword (k*2), fused via Reciprocal Rank Fusion, top-20 candidates
-4. `rerank_node` — Jina cross-encoder scoring, cut to top-5 (feature-flagged, disabled in prod due to t3.micro RAM budget)
+4. `rerank_node` — Jina cross-encoder scoring, cut to top-5 (feature-flagged, disabled on Render Free due to RAM budget)
 5. `evaluate_retrieval_node` — writes confidence verdict: `"high"` if `max_rerank_score >= 0.3`, else `"low"`
 6. **Conditional edge:** `"low"` → `fallback_response_node` (deterministic message, no LLM call) | `"high"` → `format_context_node`
 7. `format_context_node` — builds `[SOURCE: PROJECT NAME]` labels per chunk
@@ -273,7 +272,7 @@ After the Reciprocal Rank Fusion stage returns the top-20 candidates, an optiona
 
 **Pipeline position.** After `retrieve_node` (RRF top-20), before `evaluate_retrieval_node` (confidence gate). The reranker writes `reranked_chunks` (top-5 best-first) and `max_rerank_score`; the gate then classifies `"high"` (≥ 0.3) or `"low"` (< 0.3 or no chunks).
 
-**Feature flag.** `rag_rerank_enabled` — code default `True` (so dev and CI exercise the full pipeline), production override `False` via env var. Reason: the Jina ONNX model adds ~350 MB to the RAM footprint; together with embedder + Chroma + Python runtime on a t3.micro (1 GB total RAM), the reranker pushes the stack past OOM. Re-enabling is a single env flip after upgrading to t3.small.
+**Feature flag.** `rag_rerank_enabled` — code default `True` (so dev and CI exercise the full pipeline), production override `False` via env var. Reason: the Jina ONNX model adds ~350 MB to the RAM footprint; together with embedder + Chroma + Python runtime on Render Free's 512MB instance, the reranker can push the stack past OOM. Re-enabling is a single env flip after moving to a larger instance.
 
 **With flag off (current prod state):** `rerank_node` slices the RRF top-5 through as-is, writes `max_rerank_score = 1.0`, and the confidence gate effectively reduces to an empty check. The off-topic gate is missing, but the tight system prompt ("NEVER fill gaps with assumptions") keeps the LLM from hallucinating on off-topic queries.
 
@@ -299,10 +298,10 @@ The broader lesson: when you build a gate, verify the signal separates your two 
 | **Hybrid search (semantic + BM25) instead of pure semantic** | Semantic search alone misses exact technical terms like "FastAPI" when embeddings don't capture them well. BM25 catches them. RRF combines the strengths without needing to tune a weight. |
 | **Reciprocal Rank Fusion (RRF) over weighted sum** | Parameter-free (no weight tuning), robust across query types, standard in information retrieval literature |
 | **Section-aware chunking over fixed-size chunking** | Naive 500-char splits break sentences and lose context. Detecting sections (via markdown headings or PDF font-size analysis) keeps coherent content together. |
-| **Pre-build ingestion in Dockerfile** | t3.micro has only 1GB RAM — loading fastembed + ChromaDB + ingesting chunks at startup caused OOM crashes. Baking the vector store into the image solves this. |
+| **Runtime ingestion of curated Markdown KBs** | The knowledge base is small enough to index on startup, avoids committing generated ChromaDB files, and keeps the Docker image simple for Render. |
 | **Streaming SSE over WebSockets** | Simpler (one-way server → client), works through standard HTTP proxies, no connection upgrade, good browser support via Fetch API ReadableStream |
 | **Vanilla HTML/JS over React** | Single file, no build step, loads instantly, zero dependencies for the chat UI. The backend does the heavy lifting. |
-| **Nginx reverse proxy over direct FastAPI exposure** | SSL termination via Let's Encrypt, standard security posture, handles port 80 → 443 redirect |
+| **Render managed HTTPS over custom reverse proxy** | No Nginx to maintain for the current live demo; Render terminates HTTPS and forwards traffic to the Docker service. |
 | **temperature=0 on the LLM** | Deterministic responses — critical for RAGAS evaluation consistency and for recruiter-facing reliability |
 | **Gemini as RAGAS evaluator (not Groq)** | Best practice: use a different, stronger model to judge than the one generating. Prevents self-evaluation bias. |
 
@@ -410,7 +409,7 @@ Content-Type: text/event-stream
 Cache-Control: no-cache
 X-Accel-Buffering: no  # prevents Nginx from buffering
 ```
-The `X-Accel-Buffering: no` header is critical — without it, Nginx would buffer the entire response before sending it, defeating the purpose of streaming.
+The `X-Accel-Buffering: no` header is kept as a defensive proxy-compatibility hint. The current Render deployment does not require a custom Nginx layer, but the header is useful if the service is later moved behind Nginx again.
 
 ### Frontend Consumption
 Uses Fetch API's ReadableStream:
@@ -462,58 +461,36 @@ GET  /api/documents           — List all ingested documents
 | `RAG_RERANK_MODEL` | `jinaai/jina-reranker-v2-base-multilingual` | Cross-encoder checkpoint used when rerank is enabled |
 | `RAG_RERANK_TOP_K` | `5` | Post-rerank cut — how many chunks reach the LLM |
 | `RAG_RERANK_MIN_SCORE` | `0.3` | Sigmoid-normalised threshold for the confidence gate |
-| `RAG_RERANK_ENABLED` | `true` (code) / `false` (prod) | Feature flag — off in prod on t3.micro due to 350 MB RAM footprint of the Jina ONNX model |
+| `RAG_RERANK_ENABLED` | `true` (code) / `false` (prod) | Feature flag — off in the Render free deployment due to the 350 MB RAM footprint of the Jina ONNX model |
 | `GOOGLE_API_KEY` | optional | For RAGAS evaluation only (Gemini as judge) |
 
 ---
 
-## Production Deployment — AWS EC2
+## Production Deployment — Render Free
 
 ### Infrastructure
-- **Instance:** AWS EC2 t3.micro (1GB RAM, 2 vCPUs, free tier eligible)
+- **Provider:** Render Web Service
+- **Plan:** Free tier, 512MB RAM
 - **Region:** eu-central-1 (Frankfurt)
-- **OS:** Amazon Linux 2023
-- **Domain:** `chatbot.tifortunato.com` (subdomain of `tifortunato.com`, registered via Namecheap)
-- **DNS:** Namecheap A record pointing to EC2 public IP
-- **SSL:** Let's Encrypt via Certbot, auto-renewal via cron
+- **Runtime:** Docker
+- **Live URL:** `https://rag-pdf-chatbot-0w9z.onrender.com`
+- **HTTPS:** Managed by Render
+- **Previous custom domain:** `chatbot.tifortunato.com` was used for the AWS deployment, but is not the current live endpoint
 
 ### Deployment Stack
-- **Docker** container managed with `--restart unless-stopped`
-- **Nginx** reverse proxy on ports 80/443 → container on `127.0.0.1:8000`
-- **HTTP → HTTPS redirect** enforced by Nginx config
-- **Swap space** (1GB) added to handle Docker builds without OOM
-- **Container binding:** `127.0.0.1:8000:8000` (localhost only) — Nginx is the only public-facing surface
-
-### Nginx Configuration
-```nginx
-server {
-    listen 80;
-    server_name chatbot.tifortunato.com;
-    # ... Certbot handles 443 block and HTTP → HTTPS redirect
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;            # Critical for SSE streaming
-        proxy_cache off;
-        chunked_transfer_encoding on;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
-    }
-}
-```
+- **Docker** service built from the repository
+- **Uvicorn** runs on Render's provided `$PORT`
+- **ChromaDB path:** `/tmp/chroma_db` on the free service
+- **Reranker disabled:** `RAG_RERANK_ENABLED=false` to stay under 512MB
+- **Health endpoint:** `/health`
+- **Known tradeoff:** Render Free spins down after inactivity, so the first request can cold-start slowly
 
 ### Deployment Flow
 1. Push code to GitHub `main` branch
-2. SSH into EC2
-3. `cd ~/ai-career-assistant && git pull origin main`
-4. `sudo docker build -t career-chatbot .` (pre-ingests knowledge bases)
-5. `sudo docker stop chatbot && sudo docker rm chatbot`
-6. `sudo docker run -d --name chatbot --restart unless-stopped --env-file .env -p 127.0.0.1:8000:8000 career-chatbot`
-7. Container auto-restarts on failure
+2. Render auto-deploys the Docker service from `main`
+3. Required environment variables are set in Render: `GROQ_API_KEY`, `RAG_RERANK_ENABLED=false`, `CHROMA_PATH=/tmp/chroma_db`, and `LLM_MODEL`
+4. Render builds the image, starts Uvicorn, and checks `/health`
+5. The app serves both the chat UI and API endpoints from the Render URL
 
 ---
 
@@ -537,17 +514,16 @@ Best practice in LLM evaluation: **use a different (ideally stronger) model as t
 
 ---
 
-## Performance Optimizations for t3.micro
+## Performance Optimizations for Render Free
 
-The t3.micro's 1GB RAM is a real constraint. Several deliberate choices accommodate it:
+Render Free's 512MB RAM is the main production constraint. Several deliberate choices accommodate it:
 
-1. **Pre-build ingestion** — vector store is built during `docker build`, not at runtime startup
+1. **Small knowledge base** — four curated markdown files instead of large PDFs
 2. **Local embeddings** — avoids latency and cost of remote embedding APIs
 3. **Small embedding model** — `BAAI/bge-small-en-v1.5` is only ~80MB (vs 400MB+ for larger models)
-4. **retrieval_k=20 (RRF candidate pool) → top-5 after reranking** — keeps the final LLM context window small for fast Groq inference while still feeding the reranker a rich candidate set
+4. **Reranker disabled in production** — avoids loading the ~350MB Jina ONNX model on the free instance
 5. **BM25 index is lazy** — built on first query, not at startup (saves RAM during cold start)
-6. **Container binds to 127.0.0.1** — no extra memory for public network stack; Nginx handles external traffic
-7. **Swap space (1GB)** — backstop for Docker builds that briefly exceed 1GB
+6. **Groq-hosted LLM** — generation happens through Groq, not on the Render instance
 
 ---
 
@@ -557,13 +533,14 @@ The t3.micro's 1GB RAM is a real constraint. Several deliberate choices accommod
 - **Historical RAGAS ceiling at Faithfulness ≈ 0.5** — measured while the chatbot was still running on Llama 3.1 8B (before the upgrade to the current Llama 3.3 70B primary). The 8B model size was the bottleneck on this knowledge-heavy task; a fresh RAGAS pass against the 70B primary is pending. A stronger judge (GPT-4, Claude) over the same retrieval would also raise the ceiling.
 - **No query expansion** — Tried LLM-based query expansion but it hurt precision more than it helped recall. Removed.
 - **BM25 index rebuilt on restart** — Lazy initialization means the first query after container start is slower. Could be pre-built at startup if memory allowed.
+- **Render Free cold starts** — the service can spin down after inactivity, so the first visitor may wait around 50 seconds.
 - **No conversation history limit** — long conversations could exceed the LLM's context window. Need sliding window or summarization.
-- **Thesis PDF (~3MB, 85 pages) excluded** — too large to ingest on t3.micro. Key content was extracted into `knowledge_base.md` as markdown summaries instead.
+- **Thesis PDF (~3MB, 85 pages) excluded** — too large for the current free-tier memory budget. Key content was extracted into `knowledge_base.md` as markdown summaries instead.
 
 ### Future Improvements
-- **Re-enable cross-encoder reranking in production** — the reranker is already implemented (`jinaai/jina-reranker-v2-base-multilingual`, see "Cross-Encoder Reranker & Confidence Gate" above) but is feature-flagged off on t3.micro due to its ~350 MB RAM footprint. Upgrading to t3.small and flipping `RAG_RERANK_ENABLED=true` re-activates it — no code change
+- **Re-enable cross-encoder reranking in production** — the reranker is already implemented (`jinaai/jina-reranker-v2-base-multilingual`, see "Cross-Encoder Reranker & Confidence Gate" above) but is feature-flagged off on Render Free due to its ~350 MB RAM footprint. Moving to a larger instance and flipping `RAG_RERANK_ENABLED=true` re-activates it — no code change
 - **Conversation summarization** — summarize old turns instead of truncating
-- **Upgrade to t3.small (2GB)** — would re-enable the reranker and allow larger embedding models
+- **Upgrade hosting only if needed** — a paid Render instance or small VPS would remove cold starts and allow the reranker
 - **Structured output** — use LangChain's structured output for responses with cited source IDs per claim
 - **A/B testing infrastructure** — to measure the impact of prompt/retrieval changes on real users
 
@@ -572,7 +549,7 @@ The t3.micro's 1GB RAM is a real constraint. Several deliberate choices accommod
 ## RAG Chatbot Q&A
 
 **Q: What does the AI Career Assistant do?**
-A: It's a RAG chatbot that acts as Tiago Fortunato's interactive professional profile. Recruiters ask natural-language questions about his experience, projects, and skills, and receive accurate, sourced answers in real time with streaming responses. Live at [chatbot.tifortunato.com](https://chatbot.tifortunato.com).
+A: It's a RAG chatbot that acts as Tiago Fortunato's interactive professional profile. Recruiters ask natural-language questions about his experience, projects, and skills, and receive accurate, sourced answers in real time with streaming responses. Current live demo: [rag-pdf-chatbot-0w9z.onrender.com](https://rag-pdf-chatbot-0w9z.onrender.com).
 
 **Q: What is RAG and why use it for this?**
 A: RAG (Retrieval-Augmented Generation) combines document retrieval with LLM generation. Instead of relying only on what the LLM was trained on, you retrieve relevant documents first and let the model ground its answers in them. This reduces hallucinations and lets the chatbot answer questions about content it was never trained on — like Tiago's specific projects and experience.
@@ -599,7 +576,7 @@ A: BAAI/bge-small-en-v1.5 runs locally via fastembed. It's a ~80MB model that pr
 A: Inference latency. Groq's LPU hardware runs Llama 3.3 70B at 500+ tokens/sec (vs GPT-4's ~50), fast enough for streaming to feel instant. Free tier is generous for portfolio traffic. Automatic fallback to Llama 3.1 8B on 429 errors keeps the chat responsive under rate-limit pressure. For a recruiter-facing chatbot, response speed matters — slow responses kill engagement.
 
 **Q: How many chunks are retrieved per query? Wie viele Chunks werden retrievt?**
-A: **20 candidates from RRF, then cut to 5 after the cross-encoder reranker.** Specifically: each of the two searches (semantic via ChromaDB, keyword via BM25) returns `k*2 = 40` raw candidates. Reciprocal Rank Fusion merges them into a ranked top-`retrieval_k = 20` candidate pool. The cross-encoder reranker (when `RAG_RERANK_ENABLED=true`) scores each (query, chunk) pair jointly and narrows to `rag_rerank_top_k = 5` chunks — that top-5 is what the LLM actually sees. When the reranker is off in production (current state on t3.micro), the first 5 of the RRF top-20 are passed through as-is.
+A: **20 candidates from RRF, then cut to 5 after the cross-encoder reranker.** Specifically: each of the two searches (semantic via ChromaDB, keyword via BM25) returns `k*2 = 40` raw candidates. Reciprocal Rank Fusion merges them into a ranked top-`retrieval_k = 20` candidate pool. The cross-encoder reranker (when `RAG_RERANK_ENABLED=true`) scores each (query, chunk) pair jointly and narrows to `rag_rerank_top_k = 5` chunks — that top-5 is what the LLM actually sees. When the reranker is off in the current Render Free deployment, the first 5 of the RRF top-20 are passed through as-is.
 
 **Q: Which LLM / language model does this chatbot use for answer generation?**
 A: The **primary LLM is `llama-3.3-70b-versatile`** via Groq, with `temperature=0` for deterministic output. When Groq returns a 429 rate-limit error, the `generate_answer_node` automatically falls back to `llama-3.1-8b-instant`. The same 8B model also runs the separate follow-up-question generation call (best-effort, fails silently). The 70B handles all user-facing answers by default; the 8B is a safety net, not the primary. (Note: the chatbot was originally built on 8B-only; it was later upgraded to the 70B primary + 8B fallback layered setup.)
@@ -610,11 +587,11 @@ A: Server-Sent Events (SSE). The backend uses an async generator in FastAPI's St
 **Q: Why SSE instead of WebSockets?**
 A: SSE is simpler (one-way server → client, no connection upgrade), works through standard HTTP proxies without configuration, has good native browser support, and doesn't need a separate WebSocket server. For a chat that only needs server-to-client streaming, WebSockets are overkill.
 
-**Q: How is the Nginx proxy configured for streaming?**
-A: The key setting is `proxy_buffering off`. By default, Nginx buffers responses, which would defeat SSE by collecting the entire stream before sending it. With `proxy_buffering off` and `X-Accel-Buffering: no` on the response headers, tokens are flushed through immediately.
+**Q: How is streaming handled on Render?**
+A: The app uses Server-Sent Events through FastAPI's `StreamingResponse`. On the current Render deployment there is no custom Nginx layer to maintain; Render terminates HTTPS and forwards traffic to the Docker service. The backend still sends `X-Accel-Buffering: no` as a defensive header for proxy compatibility.
 
-**Q: Why pre-ingest the knowledge base at Docker build time?**
-A: The t3.micro has only 1GB RAM. Loading fastembed (~80MB), ChromaDB, and ingesting ~100 chunks at startup all at once causes OOM crashes. By running the ingestion during `docker build` (where memory pressure is lower), the vector store is baked into the image. At runtime, the container only reads the pre-built ChromaDB — much less memory pressure.
+**Q: Why disable the reranker in production?**
+A: Render Free has a 512MB RAM limit. The Jina cross-encoder reranker adds roughly 350MB, so it is feature-flagged off in production with `RAG_RERANK_ENABLED=false`. The pipeline still uses hybrid retrieval with semantic search + BM25 + Reciprocal Rank Fusion, then sends the top chunks to the LLM.
 
 **Q: How does conversation history work?**
 A: Short queries (fewer than 5 words) get enriched with the last 2 conversation exchanges before being sent to retrieval. This resolves references like "tell me more about the first one" where the search query alone has no meaningful keywords. Longer, specific queries are used as-is to avoid diluting retrieval. History is also passed to the LLM via LangChain's MessagesPlaceholder so the model can reference prior turns.
@@ -632,19 +609,19 @@ A: RAGAS (Retrieval-Augmented Generation Assessment). It's a Python framework th
 A: Best practice in LLM evaluation: the judge should be a different (ideally stronger) model than the one generating. Using the same model introduces self-evaluation bias. Gemini 2.5 Flash is a separate, capable evaluator with a generous free tier.
 
 **Q: How is the chatbot deployed?**
-A: AWS EC2 t3.micro (1GB RAM, Frankfurt region) running Docker. Nginx reverse proxy on 443 handles SSL (Let's Encrypt). Container binds to `127.0.0.1:8000` — Nginx is the only public surface. Custom domain `chatbot.tifortunato.com` via Namecheap DNS A record. Let's Encrypt auto-renewal via cron. `--restart unless-stopped` keeps the container alive through crashes.
+A: The current public deployment runs as a Docker web service on Render Free in Frankfurt. Render provides HTTPS and the public URL. The app runs Uvicorn on Render's `$PORT`, uses `/tmp/chroma_db` for ChromaDB, and keeps `RAG_RERANK_ENABLED=false` to fit the 512MB memory limit.
 
-**Q: Why AWS EC2 instead of a managed service like Render?**
-A: Previously deployed on Render (free tier) but moved to EC2 for: (1) always-on (Render free tier spins down after inactivity), (2) full control over the infrastructure, (3) custom domain + HTTPS setup as a learning experience, (4) no cold-start delays. Render was easier but EC2 is the production setup.
+**Q: Did Tiago also deploy this on AWS?**
+A: Yes. Tiago migrated the chatbot to AWS EC2 as a learning and infrastructure exercise, setting up Docker, Nginx, Let's Encrypt, DNS, and a custom domain manually. After proving the setup, he shut AWS down intentionally to avoid surprise billing. The current cost-controlled live deployment is Render Free.
 
-**Q: What's the memory constraint on t3.micro?**
-A: 1GB RAM is the main bottleneck. Had to optimize: pre-build ingestion instead of runtime, small embedding model, limited retrieval_k, 1GB swap space as backstop, container binds to localhost only. Adding more features (thesis PDF ingestion, larger embeddings, cross-encoder reranking) would require upgrading to t3.small.
+**Q: What's the memory constraint on Render Free?**
+A: 512MB RAM is the main bottleneck. The app is optimized with a small embedding model, curated markdown knowledge bases, limited retrieval size, lazy BM25 initialization, and the reranker disabled in production. Adding larger PDFs, larger embedding models, or always-on reranking would require upgrading hosting.
 
 **Q: What tests exist?**
 A: 11 Pytest tests across `test_health.py` (3 tests), `test_query.py` (5 tests), and `test_upload.py` (3 tests). They cover the health endpoint, query endpoint with and without history, streaming endpoint, and PDF upload with validation. GitHub Actions CI runs them on every push.
 
 **Q: What was the hardest part of building this?**
-A: Fitting the RAG pipeline into 1GB RAM. Every attempt to make it "better" (larger embeddings, bigger chunks, more retrieved chunks, thesis PDF ingestion) hit OOM errors on the t3.micro. Had to learn when "enough" is actually enough. The final config (500-char chunks, small embeddings, RRF candidate pool of 20 cut to top-5 after rerank, pre-build ingestion) is the sweet spot between quality and what the hardware can actually run.
+A: Fitting the RAG pipeline into constrained memory. Every attempt to make it "better" (larger embeddings, bigger chunks, more retrieved chunks, thesis PDF ingestion, always-on reranking) risked OOM errors on low-cost infrastructure. The final Render config is pragmatic: 500-char chunks, small local embeddings, hybrid retrieval, Groq-hosted generation, and reranking disabled unless a larger instance is used.
 
 **Q: What would you do differently next time?**
 A: (1) Start with a bigger instance for development and only optimize down at the end. (2) Skip query expansion — tried it, added latency without helping scores. (3) Write evaluation tests (RAGAS) from day one instead of as an afterthought. (4) Plan the knowledge base structure before writing it — section sizes and titles directly affect retrieval quality.

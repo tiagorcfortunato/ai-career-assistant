@@ -22,5 +22,5 @@
   <rect x="550" y="420" width="100" height="32" rx="8" fill="#eff6ff"/>
   <text x="600" y="442" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="15" fill="#2563eb">FastAPI</text>
   <rect x="660" y="420" width="90" height="32" rx="8" fill="#eff6ff"/>
-  <text x="705" y="442" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="15" fill="#2563eb">AWS</text>
+  <text x="705" y="442" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="15" fill="#2563eb">Render</text>
 </svg>
