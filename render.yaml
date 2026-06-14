@@ -15,3 +15,5 @@ services:
         value: false
       - key: ANONYMIZED_TELEMETRY
         value: "False"
+      - key: CHROMA_ANONYMIZED_TELEMETRY
+        value: "False"

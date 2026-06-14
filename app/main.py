@@ -17,8 +17,10 @@ from pathlib import Path
 
 # Silence chromadb's posthog telemetry — the version we pin emits noisy
 # "capture() takes 1 positional argument but 3 were given" errors on every
-# call. Must be set before any chromadb import.
+# call. chromadb reads the CHROMA_-prefixed name; set both to be safe.
+# Must be set before any chromadb import.
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+os.environ.setdefault("CHROMA_ANONYMIZED_TELEMETRY", "False")
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
