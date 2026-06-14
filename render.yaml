@@ -13,3 +13,5 @@ services:
         value: /tmp/chroma_db
       - key: RAG_RERANK_ENABLED
         value: false
+      - key: ANONYMIZED_TELEMETRY
+        value: "False"

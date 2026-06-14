@@ -11,8 +11,14 @@ Think of this as the "manager" — it wires everything together but doesn't do t
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# Silence chromadb's posthog telemetry — the version we pin emits noisy
+# "capture() takes 1 positional argument but 3 were given" errors on every
+# call. Must be set before any chromadb import.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
