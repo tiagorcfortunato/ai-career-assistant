@@ -5,7 +5,7 @@
 .env
 
 # Vector DB
-chroma_db/
+# chroma_db/ is intentionally tracked — shipped pre-ingested to skip startup re-ingestion on Render Free
 chroma_db_local/
 
 # Python

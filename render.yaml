@@ -10,7 +10,7 @@ services:
       - key: LLM_MODEL
         value: llama-3.1-8b-instant
       - key: CHROMA_PATH
-        value: /tmp/chroma_db
+        value: ./chroma_db
       - key: RAG_RERANK_ENABLED
         value: false
       - key: ANONYMIZED_TELEMETRY

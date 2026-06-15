@@ -18,10 +18,10 @@ COPY data/odys_knowledge.md ./data/odys_knowledge.md
 COPY data/rag_chatbot_knowledge.md ./data/rag_chatbot_knowledge.md
 COPY data/inspection_api_knowledge.md ./data/inspection_api_knowledge.md
 
-# Ingestion happens at runtime startup, not build time. This keeps the Docker
-# image simple and lets Render build the image without a large ChromaDB layer.
-
-RUN mkdir -p chroma_db
+# Ship the pre-ingested ChromaDB inside the image so startup can skip
+# re-ingestion — keeps memory usage under Render Free's 512MB cap.
+# Re-generate locally by running the ingestion script, then commit chroma_db/.
+COPY chroma_db/ ./chroma_db/
 
 EXPOSE 8000
 
